@@ -1,7 +1,7 @@
 # wavmaker.ps1
 # author: Joshua Mazgelis
 # date: 2024-01-08
-# version: 1.0
+# version: 1.1
 
 # This script converts MP3 files to WAV format, renames them by removing the leading track number, and moves them to a target folder with a 3-digit prefix based on user input.
 # It also handles the case where a file with the target prefix already exists by incrementing the prefix until an available one is found.
@@ -41,8 +41,21 @@ if (-not (Get-Command ffmpeg -ErrorAction SilentlyContinue)) {
 }
 
 # Remove the leading track number from the file name
-Get-ChildItem -Path $inputFolder -Filter *.mp3 | ForEach-Object {
-    if ($_.Name -match '^\d+\s*') {
+Get-ChildItem -Path $inputFolder -Include *.mp3, *.m4a -Recurse | ForEach-Object {
+    Write-Host "Processing file: $($_.Name)"
+    # Check if the file name starts with a track number
+    if ($_.Name -match '^\d+[-\s]?\d+\s*') {
+        $newName = $_.Name -replace '^\d+[-\s]?\d+\s*', ''
+        Write-Host "This file has a leading disc & track number:"
+        Write-Host "Old Name: $($_.Name)"
+        Write-Host "New Name: $newName"
+        $confirmation = Read-Host "Do you want to rename this file? (y/n)"
+        if ($confirmation -eq 'y') {
+            Rename-Item -Path $_.FullName -NewName $newName
+        } else {
+            Write-Host "Skipping rename for: $($_.Name)"
+        }
+    } elseif ($_.Name -match '^\d+\s*') {
         $newName = $_.Name -replace '^\d+\s*', ''
         Write-Host "This file has a leading track number:"
         Write-Host "Old Name: $($_.Name)"
@@ -51,14 +64,14 @@ Get-ChildItem -Path $inputFolder -Filter *.mp3 | ForEach-Object {
         if ($confirmation -eq 'y') {
             Rename-Item -Path $_.FullName -NewName $newName
         } else {
-            Write-Host "Skipping file: $($_.Name)"
+            Write-Host "Skipping rename for: $($_.Name)"
         }
     }
 }
 
 # Loop through all MP3 files and convert them to WAV format
 $convertedCount = 0
-Get-ChildItem -Path $inputFolder -Filter *.mp3 | ForEach-Object {
+Get-ChildItem -Path $inputFolder -Include *.mp3, *.m4a -Recurse | ForEach-Object {
     $mp3File = $_.FullName
     $wavFile = Join-Path $outputFolder ($_.BaseName + ".wav")
     if (-not (Test-Path $wavFile)) {

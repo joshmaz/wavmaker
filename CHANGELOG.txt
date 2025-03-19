@@ -1,0 +1,6 @@
+Version 1.1 - 
+Added:
+Better file handling after processing.
+Support for .m4a along with .mp3 source files
+
+Version 1.0 - Initial build
