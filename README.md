@@ -2,6 +2,9 @@
 
 A PowerShell script that automates the conversion of MP3 and M4A files to WAV format specifically for WAV Trigger boards. This tool ensures all output files meet the strict WAV Trigger requirements and handles file organization according to specifications.
 
+## Project Context
+This tool is part of a larger project to add digital sound to a 1947 Chicago Coin Play Boy pinball machine. The system uses a WAV Trigger board to manage audio playback for various game events, including music, sound effects, and voice announcements. See [CONFIGURATION.md](CONFIGURATION.md) for detailed information about the WAV Trigger setup and project vision.
+
 ## Features
 
 - Converts MP3 and M4A files to WAV format meeting WAV Trigger requirements:
@@ -12,7 +15,7 @@ A PowerShell script that automates the conversion of MP3 and M4A files to WAV fo
 - Automatically validates converted WAV files
 - Handles file renaming and organization
 - Supports both primary (101-199) and alternate (201-299) track collections
-- Preserves metadata during conversion
+- Preserves essential metadata during conversion
 - Interactive file processing with user confirmation
 
 ## Prerequisites
@@ -31,7 +34,7 @@ A PowerShell script that automates the conversion of MP3 and M4A files to WAV fo
 
 ## Usage
 
-1. Place your MP3 or M4A files in the `MP3s` folder
+1. Place your MP3 or M4A files in the `Source_Files` folder
 2. Run the script:
    ```powershell
    .\wavmaker.ps1
@@ -43,7 +46,7 @@ A PowerShell script that automates the conversion of MP3 and M4A files to WAV fo
 
 ## File Organization
 
-- Source files: Place in `MP3s` folder
+- Source files: Place in `Source_Files` folder
 - Converted files: Temporarily stored in `WAVs` folder
 - Final destination: Files are moved to the configured target folder with proper 3-digit prefixes
 

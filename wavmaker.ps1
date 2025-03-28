@@ -1,7 +1,7 @@
 # wavmaker.ps1
 # author: Joshua Mazgelis
 # date: 2025-03-28
-# version: 1.3
+# version: 1.4
 
 # This script converts MP3/M4A files to WAV format meeting WAV Trigger requirements:
 # - 16-bit PCM
@@ -13,12 +13,18 @@
 # Set the path to the ffmpeg executable
 $ffmpegPath = "C:\ProgramData\chocolatey\lib\ffmpeg\tools\ffmpeg\bin\ffmpeg.exe"
 
-# Set working directory to the folder containing the MP3 files
-$inputFolder = ".\MP3s"
+# Set working directory to the folder containing the source files
+$inputFolder = ".\Source_Files"
 $outputFolder = ".\WAVs"
 
 # Set target folder for WAV files
 $targetFolder = "C:\Users\joshm\OneDrive\Documents\WAV Trigger\Chicago Coin Playboy"
+
+# Target Folder Strategy:
+# This script writes directly to the target folder to maintain a consistent numerical sequence
+# and prevent duplicate tracks. When files are removed from the target directory, this approach
+# allows new files to fill in the gaps numerically. Additionally, it enables checking for existing
+# tracks with the same name to prevent accidental duplicates with different numerical prefixes.
 
 # Set range numbers for primary and alternate track collections
 $primaryRange = 101..199
@@ -41,6 +47,32 @@ $env:PATH += ";$($ffmpegPath)"
 if (-not (Get-Command ffmpeg -ErrorAction SilentlyContinue)) {
     Write-Host "ffmpeg is not accessible. Please check your PATH."
     exit
+}
+
+# Function to sanitize metadata
+function Get-SanitizedMetadata {
+    param (
+        [string]$InputFile
+    )
+    
+    # Extract basic metadata using ffprobe
+    $metadata = ffprobe -v quiet -print_format json -show_format -show_streams "$InputFile" | ConvertFrom-Json
+    
+    # Create sanitized metadata
+    $sanitized = @{
+        title = if ($metadata.format.tags.title) { $metadata.format.tags.title } else { [System.IO.Path]::GetFileNameWithoutExtension($InputFile) }
+        artist = if ($metadata.format.tags.artist) { $metadata.format.tags.artist } else { "Unknown Artist" }
+        album = if ($metadata.format.tags.album) { $metadata.format.tags.album } else { "Unknown Album" }
+        date = if ($metadata.format.tags.date) { $metadata.format.tags.date } else { "Unknown Date" }
+    }
+    
+    # Create metadata string for ffmpeg
+    $metadataString = "-metadata title=`"$($sanitized.title)`" " +
+                     "-metadata artist=`"$($sanitized.artist)`" " +
+                     "-metadata album=`"$($sanitized.album)`" " +
+                     "-metadata date=`"$($sanitized.date)`" "
+    
+    return $metadataString
 }
 
 # Function to validate WAV file
@@ -103,8 +135,12 @@ Get-ChildItem -Path $inputFolder -Include *.mp3, *.m4a -Recurse | ForEach-Object
     if (-not (Test-Path $wavFile)) {
         Write-Host "Converting $($_.Name) to WAV format..."
         
-        # Convert to WAV with specific requirements
-        ffmpeg -i "$inputFile" -ac 2 -ar 44100 -acodec pcm_s16le -map_metadata 0 "$wavFile"
+        # Get sanitized metadata
+        $metadataString = Get-SanitizedMetadata -InputFile $inputFile
+        
+        # Convert to WAV with specific requirements and sanitized metadata
+        $ffmpegCommand = "ffmpeg -i `"$inputFile`" -ac 2 -ar 44100 -acodec pcm_s16le $metadataString `"$wavFile`""
+        Invoke-Expression $ffmpegCommand
         
         if ($?) {
             # Validate the converted WAV file
