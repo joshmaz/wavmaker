@@ -1,7 +1,7 @@
 # wavmaker.ps1
 # author: Joshua Mazgelis
 # date: 2025-03-28
-# version: 1.4
+# version: 1.7
 
 # This script converts MP3/M4A files to WAV format meeting WAV Trigger requirements:
 # - 16-bit PCM
@@ -58,16 +58,33 @@ function Get-SanitizedMetadata {
     # Extract basic metadata using ffprobe
     $metadata = ffprobe -v quiet -print_format json -show_format -show_streams "$InputFile" | ConvertFrom-Json
     
-    # Create sanitized metadata
+    # Create sanitized metadata with only essential fields
     $sanitized = @{
-        title = if ($metadata.format.tags.title) { $metadata.format.tags.title } else { [System.IO.Path]::GetFileNameWithoutExtension($InputFile) }
-        artist = if ($metadata.format.tags.artist) { $metadata.format.tags.artist } else { "Unknown Artist" }
-        album = if ($metadata.format.tags.album) { $metadata.format.tags.album } else { "Unknown Album" }
-        date = if ($metadata.format.tags.date) { $metadata.format.tags.date } else { "Unknown Date" }
+        title = if ($metadata.format.tags.title) { 
+            ($metadata.format.tags.title -replace '[^\w\s-]', '').Trim()  # Remove special characters
+        } else { 
+            [System.IO.Path]::GetFileNameWithoutExtension($InputFile) 
+        }
+        artist = if ($metadata.format.tags.artist) { 
+            ($metadata.format.tags.artist -replace '[^\w\s-]', '').Trim()
+        } else { 
+            "Unknown Artist" 
+        }
+        album = if ($metadata.format.tags.album) { 
+            ($metadata.format.tags.album -replace '[^\w\s-]', '').Trim()
+        } else { 
+            "Unknown Album" 
+        }
+        date = if ($metadata.format.tags.date) { 
+            ($metadata.format.tags.date -replace '[^\d]', '').Trim()  # Keep only numbers
+        } else { 
+            "Unknown Date" 
+        }
     }
     
-    # Create metadata string for ffmpeg
-    $metadataString = "-metadata title=`"$($sanitized.title)`" " +
+    # Create metadata string for ffmpeg using original field names
+    $metadataString = "-map_metadata -1 " +  # First strip ALL metadata
+                     "-metadata title=`"$($sanitized.title)`" " +
                      "-metadata artist=`"$($sanitized.artist)`" " +
                      "-metadata album=`"$($sanitized.album)`" " +
                      "-metadata date=`"$($sanitized.date)`" "
@@ -95,6 +112,30 @@ function Test-WavFile {
     return ($properties['sample_rate'] -eq '44100' -and
             $properties['channels'] -eq '2' -and
             $properties['bits_per_sample'] -eq '16')
+}
+
+# Function to check for duplicate files by name (ignoring prefix)
+function Test-DuplicateFile {
+    param (
+        [string]$TargetFolder,
+        [string]$FileName
+    )
+    
+    # Get all WAV files in the target folder
+    $existingFiles = Get-ChildItem -Path $TargetFolder -Filter "*.wav"
+    
+    # Extract the base name without prefix (everything after the first hyphen)
+    $baseName = $FileName -replace '^\d+-', ''
+    
+    # Check if any existing file has the same base name
+    foreach ($file in $existingFiles) {
+        $existingBaseName = $file.Name -replace '^\d+-', ''
+        if ($existingBaseName -eq $baseName) {
+            return $true
+        }
+    }
+    
+    return $false
 }
 
 # Remove the leading track number from the file name
@@ -139,6 +180,7 @@ Get-ChildItem -Path $inputFolder -Include *.mp3, *.m4a -Recurse | ForEach-Object
         $metadataString = Get-SanitizedMetadata -InputFile $inputFile
         
         # Convert to WAV with specific requirements and sanitized metadata
+        # The -map_metadata -1 flag strips all metadata before we add our sanitized version
         $ffmpegCommand = "ffmpeg -i `"$inputFile`" -ac 2 -ar 44100 -acodec pcm_s16le $metadataString `"$wavFile`""
         Invoke-Expression $ffmpegCommand
         
@@ -198,6 +240,17 @@ Get-ChildItem -Path $outputFolder -Filter *.wav | ForEach-Object {
     $prefix = $prefixRange[$prefixIndex]
     $targetName = "{0:D3}-{1}" -f $prefix, $_.Name
     $targetPath = Join-Path $targetFolder $targetName
+    
+    # Check for duplicate files by name (ignoring prefix)
+    if (Test-DuplicateFile -TargetFolder $targetFolder -FileName $targetName) {
+        Write-Host "Warning: A file with the same name already exists in the target folder:"
+        Write-Host "File: $($_.Name)"
+        $confirmation = Read-Host "Do you want to skip this file? (y/n)"
+        if ($confirmation -eq 'y') {
+            Write-Host "Skipping duplicate file: $($_.Name)"
+            continue
+        }
+    }
     
     # Check if a file with the target prefix already exists
     while (Get-ChildItem -Path $targetFolder -Filter "$prefix-*.wav") {

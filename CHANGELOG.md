@@ -5,20 +5,10 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [1.9] - 2024-03-28
+## [1.7] - 2024-03-28
 ### Added
 - Improved duplicate file detection that checks for files with the same name (ignoring prefix)
 - Warning prompt when a duplicate file is detected, allowing user to skip or proceed
-
-## [1.8] - 2024-03-28
-### Changed
-- Reverted metadata field names back to original format (title, artist, album, date) since software maps to standard field names
-
-## [1.7] - 2024-03-28
-### Changed
-- Updated metadata field names to use human-readable WAV metadata format:
-  - Changed to Title, Artist, Album, Year
-  - Improved compatibility with standard WAV metadata readers
 
 ## [1.6] - 2024-03-28
 ### Changed
