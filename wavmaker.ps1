@@ -1,11 +1,14 @@
 # wavmaker.ps1
 # author: Joshua Mazgelis
-# date: 2024-01-08
-# version: 1.2
+# date: 2025-03-28
+# version: 1.3
 
-# This script converts MP3 files to WAV format, renames them by removing the leading track number, and moves them to a target folder with a 3-digit prefix based on user input.
-# It also handles the case where a file with the target prefix already exists by incrementing the prefix until an available one is found.
-# It uses ffmpeg for conversion and requires it to be installed and accessible in the system PATH.
+# This script converts MP3/M4A files to WAV format meeting WAV Trigger requirements:
+# - 16-bit PCM
+# - 44.1 kHz sample rate
+# - Stereo output
+# - Uncompressed PCM encoding
+# It also handles file renaming and organization according to WAV Trigger specifications.
 
 # Set the path to the ffmpeg executable
 $ffmpegPath = "C:\ProgramData\chocolatey\lib\ffmpeg\tools\ffmpeg\bin\ffmpeg.exe"
@@ -40,6 +43,28 @@ if (-not (Get-Command ffmpeg -ErrorAction SilentlyContinue)) {
     exit
 }
 
+# Function to validate WAV file
+function Test-WavFile {
+    param (
+        [string]$FilePath
+    )
+    
+    # Use ffprobe to check WAV file properties
+    $ffprobeOutput = ffprobe -v error -select_streams a:0 -show_entries stream=sample_rate,channels,bits_per_sample -of default=noprint_wrappers=1 "$FilePath"
+    
+    # Parse the output
+    $properties = @{}
+    $ffprobeOutput | ForEach-Object {
+        $key, $value = $_ -split '='
+        $properties[$key] = $value
+    }
+    
+    # Check if all required properties are present and correct
+    return ($properties['sample_rate'] -eq '44100' -and
+            $properties['channels'] -eq '2' -and
+            $properties['bits_per_sample'] -eq '16')
+}
+
 # Remove the leading track number from the file name
 Get-ChildItem -Path $inputFolder -Include *.mp3, *.m4a -Recurse | ForEach-Object {
     Write-Host "Processing file: $($_.Name)"
@@ -69,22 +94,33 @@ Get-ChildItem -Path $inputFolder -Include *.mp3, *.m4a -Recurse | ForEach-Object
     }
 }
 
-# Loop through all MP3 files and convert them to WAV format
+# Loop through all MP3/M4A files and convert them to WAV format
 $convertedCount = 0
 Get-ChildItem -Path $inputFolder -Include *.mp3, *.m4a -Recurse | ForEach-Object {
-    $mp3File = $_.FullName
+    $inputFile = $_.FullName
     $wavFile = Join-Path $outputFolder ($_.BaseName + ".wav")
+    
     if (-not (Test-Path $wavFile)) {
-        ffmpeg -i "$mp3File" -ac 2 -map_metadata 0 "$wavFile"
+        Write-Host "Converting $($_.Name) to WAV format..."
+        
+        # Convert to WAV with specific requirements
+        ffmpeg -i "$inputFile" -ac 2 -ar 44100 -acodec pcm_s16le -map_metadata 0 "$wavFile"
+        
         if ($?) {
-            $convertedCount++
-            Remove-Item -Path $mp3File
-            Write-Host "Successfully converted and removed $mp3File"
+            # Validate the converted WAV file
+            if (Test-WavFile -FilePath $wavFile) {
+                $convertedCount++
+                Remove-Item -Path $inputFile
+                Write-Host "Successfully converted and validated $($_.Name)"
+            } else {
+                Write-Host "WAV file validation failed for $($_.Name). The file may not meet WAV Trigger requirements."
+                Remove-Item -Path $wavFile
+            }
         } else {
-            Write-Host "Conversion failed for $mp3File"
+            Write-Host "Conversion failed for $($_.Name)"
         }
     } else {
-        Write-Host "Skipping conversion for $mp3File as $wavFile already exists."
+        Write-Host "Skipping conversion for $($_.Name) as $wavFile already exists."
     }
 }
 
@@ -94,12 +130,14 @@ if ($convertedCount -eq 0) {
     exit
 }
 Write-Host "$convertedCount files were converted to WAV format."
+
 # Get the list of WAV files in the output folder
 $wavFiles = Get-ChildItem -Path $outputFolder -Filter *.wav
 if ($wavFiles.Count -eq 0) {
     Write-Host "No WAV files found in the output folder."
     exit
 }
+
 # Display the list of WAV files
 Write-Host "WAV files in the output folder:"
 foreach ($file in $wavFiles) {
@@ -122,17 +160,18 @@ $prefixIndex = 0
 Get-ChildItem -Path $outputFolder -Filter *.wav | ForEach-Object {
     $wavFile = $_.FullName
     $prefix = $prefixRange[$prefixIndex]
-    $targetName = "{0:D3} {1}" -f $prefix, $_.Name
+    $targetName = "{0:D3}-{1}" -f $prefix, $_.Name
     $targetPath = Join-Path $targetFolder $targetName
+    
     # Check if a file with the target prefix already exists
-    while (Get-ChildItem -Path $targetFolder -Filter "$prefix *.wav") {
+    while (Get-ChildItem -Path $targetFolder -Filter "$prefix-*.wav") {
         $prefixIndex++
         if ($prefixIndex -ge $prefixRange.Count) {
             Write-Host "No more available prefixes in the selected range. Exiting."
             exit
         }
         $prefix = $prefixRange[$prefixIndex]
-        $targetName = "{0:D3} {1}" -f $prefix, $_.Name
+        $targetName = "{0:D3}-{1}" -f $prefix, $_.Name
         $targetPath = Join-Path $targetFolder $targetName
     }
 
