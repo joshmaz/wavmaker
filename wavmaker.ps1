@@ -1,7 +1,7 @@
 # wavmaker.ps1
 # author: Joshua Mazgelis
 # date: 2024-01-08
-# version: 1.1
+# version: 1.2
 
 # This script converts MP3 files to WAV format, renames them by removing the leading track number, and moves them to a target folder with a 3-digit prefix based on user input.
 # It also handles the case where a file with the target prefix already exists by incrementing the prefix until an available one is found.
@@ -75,7 +75,7 @@ Get-ChildItem -Path $inputFolder -Include *.mp3, *.m4a -Recurse | ForEach-Object
     $mp3File = $_.FullName
     $wavFile = Join-Path $outputFolder ($_.BaseName + ".wav")
     if (-not (Test-Path $wavFile)) {
-        ffmpeg -i "$mp3File" "$wavFile"
+        ffmpeg -i "$mp3File" -ac 2 -map_metadata 0 "$wavFile"
         if ($?) {
             $convertedCount++
             Remove-Item -Path $mp3File
