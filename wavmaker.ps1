@@ -1,17 +1,23 @@
 # wavmaker.ps1
 # author: Joshua Mazgelis
 # date: 2025-03-28
-# version: 1.7
+# version: 1.9
 
-# This script converts MP3/M4A files to WAV format meeting WAV Trigger requirements:
+# This script processes audio files to meet WAV Trigger requirements:
 # - 16-bit PCM
 # - 44.1 kHz sample rate
 # - Stereo output
 # - Uncompressed PCM encoding
-# It also handles file renaming and organization according to WAV Trigger specifications.
-
-# Set the path to the ffmpeg executable
-$ffmpegPath = "C:\ProgramData\chocolatey\lib\ffmpeg\tools\ffmpeg\bin\ffmpeg.exe"
+#
+# Supported input formats:
+# - MP3/M4A: Converted to WAV with sanitized metadata
+# - WAV: Validated and copied if meeting requirements, converted if not
+#   Note: Valid WAV files are copied without metadata modification
+#
+# The script handles file renaming and organization according to WAV Trigger specifications:
+# - Removes leading track numbers from source files
+# - Assigns 3-digit prefixes for primary (101-199) or alternate (201-299) collections
+# - Prevents duplicate files with different numerical prefixes
 
 # Set working directory to the folder containing the source files
 $inputFolder = ".\Source_Files"
@@ -30,23 +36,28 @@ $targetFolder = "C:\Users\joshm\OneDrive\Documents\WAV Trigger\Chicago Coin Play
 $primaryRange = 101..199
 $alternateRange = 201..299
 
+# Welcome message
+Write-Host "Welcome to the WAV Maker script!"
+Write-Host "This script processes audio files to meet WAV Trigger requirements."
+Write-Host "  (16-bit PCM, 44.1 kHz, stereo)"
+
+# Check if ffmpeg is accessible
+$ffmpegLocation = Get-Command ffmpeg -ErrorAction SilentlyContinue
+if (-not $ffmpegLocation) {
+    Write-Host "ffmpeg is not installed or not accessible. Please install it and try again."
+    exit
+} else {
+    Write-Host "Found ffmpeg at: $($ffmpegLocation.Source)"
+}
+
 # Create output folder if it doesn't exist
 if (-not (Test-Path $outputFolder)) {
     New-Item -ItemType Directory -Path $outputFolder
 }
 
-# Check if ffmpeg is installed
-if (-not (Test-Path $ffmpegPath)) {
-    Write-Host "ffmpeg is not installed. Please install it and try again."
-    exit
-}
-
-# Add ffmpeg to the system PATH
-$env:PATH += ";$($ffmpegPath)"
-# Check if ffmpeg is accessible
-if (-not (Get-Command ffmpeg -ErrorAction SilentlyContinue)) {
-    Write-Host "ffmpeg is not accessible. Please check your PATH."
-    exit
+# Check that the target folder exists
+if (-not (Test-Path $targetFolder)) {
+    New-Item -ItemType Directory -Path $targetFolder
 }
 
 # Function to sanitize metadata
@@ -139,7 +150,7 @@ function Test-DuplicateFile {
 }
 
 # Remove the leading track number from the file name
-Get-ChildItem -Path $inputFolder -Include *.mp3, *.m4a -Recurse | ForEach-Object {
+Get-ChildItem -Path $inputFolder -Include *.mp3, *.m4a, *.wav -Recurse | ForEach-Object {
     Write-Host "Processing file: $($_.Name)"
     # Check if the file name starts with a track number
     if ($_.Name -match '^\d+[-\s]?\d+\s*') {
@@ -167,11 +178,30 @@ Get-ChildItem -Path $inputFolder -Include *.mp3, *.m4a -Recurse | ForEach-Object
     }
 }
 
-# Loop through all MP3/M4A files and convert them to WAV format
+# Loop through all MP3/M4A/WAV files and convert them to WAV format
 $convertedCount = 0
-Get-ChildItem -Path $inputFolder -Include *.mp3, *.m4a -Recurse | ForEach-Object {
+Get-ChildItem -Path $inputFolder -Include *.mp3, *.m4a, *.wav -Recurse | ForEach-Object {
     $inputFile = $_.FullName
     $wavFile = Join-Path $outputFolder ($_.BaseName + ".wav")
+    
+    # If it's already a WAV file, validate it first
+    if ($_.Extension -eq '.wav') {
+        if (Test-WavFile -FilePath $inputFile) {
+            Write-Host "File $($_.Name) already meets WAV Trigger requirements."
+            # Copy the file to output folder instead of converting
+            Copy-Item -Path $inputFile -Destination $wavFile
+            $convertedCount++
+            Remove-Item -Path $inputFile
+            Write-Host "Copied valid WAV file: $($_.Name)"
+            # Skip the conversion part but continue with the rest of the processing
+            if (-not (Test-Path $wavFile)) {
+                Write-Host "Error: Failed to copy WAV file."
+                continue
+            }
+        } else {
+            Write-Host "WAV file $($_.Name) does not meet requirements. Will be converted."
+        }
+    }
     
     if (-not (Test-Path $wavFile)) {
         Write-Host "Converting $($_.Name) to WAV format..."
@@ -274,3 +304,8 @@ Get-ChildItem -Path $outputFolder -Filter *.wav | ForEach-Object {
         Write-Host "Skipping file: $($_.Name)"
     }
 }
+
+Write-Host "All files have been processed as directed."
+Write-Host "Please check the target folder for the newly renamed and organized files."
+Write-Host "Thank you for using the WAV Maker script!"
+
