@@ -5,16 +5,35 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [1.8] - 2024-03-29
+## [1.10] - 2024-03-29
 ### Changed
 - Updated file naming convention to use underscores instead of hyphens (e.g., `101_SongName.wav`)
 - Added `.gitkeep` to `Source_Files` directory to ensure it's included in repository clones
 - Updated documentation to reflect new naming convention
 
-## [1.7] - 2024-03-28
+## [1.9] - 2025-03-28
+### Changed
+- Improved ffmpeg detection to use system PATH instead of hardcoded path
+- Removed hardcoded ffmpeg path variable for better flexibility
+
+## [1.8] - 2025-03-28
+
 ### Added
-- Improved duplicate file detection that checks for files with the same name (ignoring prefix)
-- Warning prompt when a duplicate file is detected, allowing user to skip or proceed
+- Support for processing WAV files in source folder
+- Automatic validation of WAV files against WAV Trigger requirements
+- Direct copying of valid WAV files without conversion
+- Conversion of invalid WAV files to meet requirements
+
+### Changed
+- Updated documentation to reflect WAV file handling capabilities
+- Improved file processing logic to handle multiple input formats
+- Added WAV to file extensions being processed for prefix removal
+
+## [1.7] - 2025-03-28
+### Changed
+- Reverted metadata field names to original format (title, artist, album, date)
+- Improved duplicate detection to prevent files with same name but different prefixes
+- Updated warning message to show original filename without prefix
 
 ## [1.6] - 2024-03-28
 ### Changed
