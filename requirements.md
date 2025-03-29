@@ -11,9 +11,9 @@
 
 ## File Naming & Organization
 - Use 3-digit numeric prefixes to associate files with trigger inputs
-  - Example: `001-SoundName.wav` will play when Trigger 1 is activated
+  - Example: `001_SoundName.wav` will play when Trigger 1 is activated
 - Multiple files can use the same trigger number for random playback
-  - Example: `001-SoundA.wav`, `001-SoundB.wav`
+  - Example: `001_SoundA.wav`, `001_SoundB.wav`
 - Avoid special characters in file names (use only letters, numbers, underscores, and dashes)
 
 ## microSD Card Requirements
@@ -39,7 +39,7 @@
    - Ensure "Stereo" is selected
 
 5. Rename file with proper numeric prefix
-   - Example: `007-Cowbell.wav` for Trigger 7
+   - Example: `007_Cowbell.wav` for Trigger 7
 
 ### Batch Processing
 For multiple MP3s, use Audacity's Chains/Macros feature or ffmpeg:

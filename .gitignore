@@ -1,3 +1,7 @@
-# Ignore WAVs and Source_Files folders
-/WAVs/
-/Source_Files/
+# Ignore everything in WAVs folder except .gitkeep
+/WAVs/*
+!/WAVs/.gitkeep
+
+# Ignore everything in Source_Files except .gitkeep
+/Source_Files/*
+!/Source_Files/.gitkeep

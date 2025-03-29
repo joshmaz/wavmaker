@@ -5,12 +5,19 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.10] - 2024-03-29
+### Changed
+- Updated file naming convention to use underscores instead of hyphens (e.g., `101_SongName.wav`)
+- Added `.gitkeep` to `Source_Files` directory to ensure it's included in repository clones
+- Updated documentation to reflect new naming convention
+
 ## [1.9] - 2025-03-28
 ### Changed
 - Improved ffmpeg detection to use system PATH instead of hardcoded path
 - Removed hardcoded ffmpeg path variable for better flexibility
 
 ## [1.8] - 2025-03-28
+
 ### Added
 - Support for processing WAV files in source folder
 - Automatic validation of WAV files against WAV Trigger requirements

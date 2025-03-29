@@ -72,9 +72,9 @@ This tool is part of a larger project to add digital sound to a 1947 Chicago Coi
 
 ## File Naming Convention
 
-- Primary tracks: `101-` to `199-`
-- Alternate tracks: `201-` to `299-`
-- Example: `101-SongName.wav`
+- Primary tracks: `101_` to `199_`
+- Alternate tracks: `201_` to `299_`
+- Example: `101_SongName.wav`
 
 ## Requirements
 
