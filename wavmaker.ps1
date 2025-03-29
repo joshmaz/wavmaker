@@ -1,7 +1,7 @@
 # wavmaker.ps1
 # author: Joshua Mazgelis
 # date: 2025-03-28
-# version: 1.7
+# version: 1.8
 
 # This script converts MP3/M4A files to WAV format meeting WAV Trigger requirements:
 # - 16-bit PCM
@@ -125,11 +125,11 @@ function Test-DuplicateFile {
     $existingFiles = Get-ChildItem -Path $TargetFolder -Filter "*.wav"
     
     # Extract the base name without prefix (everything after the first hyphen)
-    $baseName = $FileName -replace '^\d+-', ''
+    $baseName = $FileName -replace '^\d+_', ''
     
     # Check if any existing file has the same base name
     foreach ($file in $existingFiles) {
-        $existingBaseName = $file.Name -replace '^\d+-', ''
+        $existingBaseName = $file.Name -replace '^\d+_', ''
         if ($existingBaseName -eq $baseName) {
             return $true
         }
@@ -142,20 +142,9 @@ function Test-DuplicateFile {
 Get-ChildItem -Path $inputFolder -Include *.mp3, *.m4a -Recurse | ForEach-Object {
     Write-Host "Processing file: $($_.Name)"
     # Check if the file name starts with a track number
-    if ($_.Name -match '^\d+[-\s]?\d+\s*') {
-        $newName = $_.Name -replace '^\d+[-\s]?\d+\s*', ''
-        Write-Host "This file has a leading disc & track number:"
-        Write-Host "Old Name: $($_.Name)"
-        Write-Host "New Name: $newName"
-        $confirmation = Read-Host "Do you want to rename this file? (y/n)"
-        if ($confirmation -eq 'y') {
-            Rename-Item -Path $_.FullName -NewName $newName
-        } else {
-            Write-Host "Skipping rename for: $($_.Name)"
-        }
-    } elseif ($_.Name -match '^\d+\s*') {
-        $newName = $_.Name -replace '^\d+\s*', ''
-        Write-Host "This file has a leading track number:"
+    if ($_.Name -match '^\d+[-\s\.]?\d*\s*') {
+        $newName = $_.Name -replace '^\d+[-\s\.]?\d*\s*', ''
+        Write-Host "This file has a leading number:"
         Write-Host "Old Name: $($_.Name)"
         Write-Host "New Name: $newName"
         $confirmation = Read-Host "Do you want to rename this file? (y/n)"
@@ -238,7 +227,7 @@ $prefixIndex = 0
 Get-ChildItem -Path $outputFolder -Filter *.wav | ForEach-Object {
     $wavFile = $_.FullName
     $prefix = $prefixRange[$prefixIndex]
-    $targetName = "{0:D3}-{1}" -f $prefix, $_.Name
+    $targetName = "{0:D3}_{1}" -f $prefix, $_.Name
     $targetPath = Join-Path $targetFolder $targetName
     
     # Check for duplicate files by name (ignoring prefix)
@@ -260,7 +249,7 @@ Get-ChildItem -Path $outputFolder -Filter *.wav | ForEach-Object {
             exit
         }
         $prefix = $prefixRange[$prefixIndex]
-        $targetName = "{0:D3}-{1}" -f $prefix, $_.Name
+        $targetName = "{0:D3}_{1}" -f $prefix, $_.Name
         $targetPath = Join-Path $targetFolder $targetName
     }
 
