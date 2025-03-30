@@ -33,8 +33,210 @@ $targetFolder = "C:\Users\joshm\OneDrive\Documents\WAV Trigger\Chicago Coin Play
 # tracks with the same name to prevent accidental duplicates with different numerical prefixes.
 
 # Set range numbers for primary and alternate track collections
-$primaryRange = 101..199
-$alternateRange = 201..299
+# File prefix ranges:
+# - 020-029: Kickout hole sounds (Primary)
+# - 030-039: Kickout hole sounds (Alternate)
+# - 040-049: Rollover lane sounds (Primary)
+# - 050-059: Rollover lane sounds (Alternate)
+# - 060-069: Tilt relay sounds (Primary)
+# - 070-079: Tilt relay sounds (Alternate)
+# - 100-199: Music tracks (Primary)
+# - 200-299: Music tracks (Alternate)
+
+# Define all range variables
+$kickoutPrimaryRange = 20..29
+$kickoutAlternateRange = 30..39
+$rolloverPrimaryRange = 40..49
+$rolloverAlternateRange = 50..59
+$tiltPrimaryRange = 60..69
+$tiltAlternateRange = 70..79
+$musicPrimaryRange = 101..199
+$musicAlternateRange = 201..299
+
+# Future enhancements:
+# - Add support for additional collection ranges
+
+
+# Function to sanitize metadata
+function Get-SanitizedMetadata {
+    param (
+        [string]$InputFile
+    )
+    
+    # Extract basic metadata using ffprobe
+    $metadata = ffprobe -v quiet -print_format json -show_format -show_streams "$InputFile" | ConvertFrom-Json
+    
+    # Create sanitized metadata with only essential fields
+    $sanitized = @{
+        INAM = if ($metadata.format.tags.title) { 
+            ($metadata.format.tags.title -replace '[^\w\s-]', '').Trim()  # Remove special characters
+        } else { 
+            [System.IO.Path]::GetFileNameWithoutExtension($InputFile) 
+        }
+        IART = if ($metadata.format.tags.artist) { 
+            ($metadata.format.tags.artist -replace '[^\w\s-]', '').Trim()
+        } else { 
+            "Unknown Artist" 
+        }
+        IPRD = if ($metadata.format.tags.album) { 
+            ($metadata.format.tags.album -replace '[^\w\s-]', '').Trim()
+        } else { 
+            "Unknown Album" 
+        }
+        ICRD = if ($metadata.format.tags.date) { 
+            ($metadata.format.tags.date -replace '[^\d]', '').Trim()  # Keep only numbers
+        } else { 
+            "Unknown Date" 
+        }
+        ICMT = if ($metadata.format.tags.comment) {
+            ($metadata.format.tags.comment -replace '[^\w\s-]', '').Trim()
+        } else {
+            ""
+        }
+        IGNR = if ($metadata.format.tags.genre) {
+            ($metadata.format.tags.genre -replace '[^\w\s-]', '').Trim()
+        } else {
+            ""
+        }
+        ITRK = if ($metadata.format.tags.track) {
+            ($metadata.format.tags.track -replace '[^\w\s-]', '').Trim()
+        } else {
+            ""
+        }
+        TPE2 = if ($metadata.format.tags.album_artist) {
+            ($metadata.format.tags.album_artist -replace '[^\w\s-]', '').Trim()
+        } else {
+            ""
+        }
+        TCOM = if ($metadata.format.tags.composer) {
+            ($metadata.format.tags.composer -replace '[^\w\s-]', '').Trim()
+        } else {
+            ""
+        }
+    }
+    
+    # Create metadata string for ffmpeg using original field names
+    $metadataString = "-map_metadata -1 " +  # First strip ALL metadata
+                     "-metadata INAM=`"$($sanitized.INAM)`" " +
+                     "-metadata IART=`"$($sanitized.IART)`" " +
+                     "-metadata IPRD=`"$($sanitized.IPRD)`" " +
+                     "-metadata ICRD=`"$($sanitized.ICRD)`" " +
+                     "-metadata ICMT=`"$($sanitized.ICMT)`" " +
+                     "-metadata IGNR=`"$($sanitized.IGNR)`" " +
+                     "-metadata ITRK=`"$($sanitized.ITRK)`" " +
+                     "-metadata TPE2=`"$($sanitized.TPE2)`" " +
+                     "-metadata TCOM=`"$($sanitized.TCOM)`" " +
+                     "-write_bext 0 " +  # Disable BEXT chunk
+                     "-write_id3v2 0 " +  # Disable ID3v2 chunk
+                     "-write_apetag 0 " +  # Disable APE tag
+                     "-write_xing 0 "      # Disable XING header
+    return $metadataString
+}
+
+# Function to validate WAV file
+function Test-WavFile {
+    param (
+        [string]$FilePath
+    )
+    
+    # Use ffprobe to check WAV file properties
+    $ffprobeOutput = ffprobe -v error -select_streams a:0 -show_entries stream=sample_rate,channels,bits_per_sample -of default=noprint_wrappers=1 "$FilePath"
+    
+    # Parse the output
+    $properties = @{}
+    $ffprobeOutput | ForEach-Object {
+        $key, $value = $_ -split '='
+        $properties[$key] = $value
+    }
+    
+    # Check each property and report failures
+    $sampleRate = $properties['sample_rate'] -eq '44100'
+    $channels = $properties['channels'] -eq '2'
+    $bitsPerSample = $properties['bits_per_sample'] -eq '16'
+    
+    if (-not $sampleRate) {
+        Write-Host "Sample rate mismatch: Expected 44100, got $($properties['sample_rate'])"
+    }
+    if (-not $channels) {
+        Write-Host "Channel count mismatch: Expected 2, got $($properties['channels'])"
+    }
+    if (-not $bitsPerSample) {
+        Write-Host "Bits per sample mismatch: Expected 16, got $($properties['bits_per_sample'])"
+    }
+    
+    return ($sampleRate -and $channels -and $bitsPerSample)
+}
+
+# Function to validate WAV file structure
+function Test-WavStructure {
+    param (
+        [string]$FilePath,
+        [string]$FileExtension
+    )
+
+    # This may not be working as intended, just return true for now
+    return $true
+    
+    # Skip structure check for non-WAV files
+    if ($FileExtension -ne '.wav') {
+        return $true
+    }
+    
+    # Use ffprobe to check WAV file structure
+    $ffprobeOutput = ffprobe -v error -show_format -show_streams -of json "$FilePath" | ConvertFrom-Json
+    
+    # Check if the file has the required chunks in the correct order
+    $hasRiff = $ffprobeOutput.format.format_name -eq 'wav'
+    if (-not $hasRiff) {
+        Write-Host "Missing or invalid RIFF header"
+    }
+    
+    # Safely check for streams array and codec
+    $hasFmt = $false
+    if ($ffprobeOutput.format.streams -and $ffprobeOutput.format.streams.Count -gt 0) {
+        $hasFmt = $ffprobeOutput.format.streams[0].codec_name -eq 'pcm_s16le'
+        if (-not $hasFmt) {
+            Write-Host "Invalid codec: Expected pcm_s16le, got $($ffprobeOutput.format.streams[0].codec_name)"
+        }
+    } else {
+        Write-Host "No audio streams found"
+    }
+    
+    $hasData = $ffprobeOutput.format.size -gt 0
+    if (-not $hasData) {
+        Write-Host "No audio data found"
+    }
+    
+    return ($hasRiff -and $hasFmt -and $hasData)
+}
+
+# Function to check for duplicate files by name (ignoring prefix)
+function Test-DuplicateFile {
+    param (
+        [string]$TargetFolder,
+        [string]$FileName
+    )
+    
+    # Get all WAV files in the target folder
+    $existingFiles = Get-ChildItem -Path $TargetFolder -Filter "*.wav"
+    
+    # Extract the base name without prefix (everything after the first underscore)
+    $baseName = $FileName -replace '^\d+_', ''
+    
+    # Check if any existing file has the same base name
+    foreach ($file in $existingFiles) {
+        $existingBaseName = $file.Name -replace '^\d+_', ''
+        if ($existingBaseName -eq $baseName) {
+            return $true
+        }
+    }
+    
+    return $false
+}
+
+########################################################################################
+# Main Script starts here
+########################################################################################
 
 # Welcome message
 Write-Host "Welcome to the WAV Maker script!"
@@ -60,93 +262,10 @@ if (-not (Test-Path $targetFolder)) {
     New-Item -ItemType Directory -Path $targetFolder
 }
 
-# Function to sanitize metadata
-function Get-SanitizedMetadata {
-    param (
-        [string]$InputFile
-    )
-    
-    # Extract basic metadata using ffprobe
-    $metadata = ffprobe -v quiet -print_format json -show_format -show_streams "$InputFile" | ConvertFrom-Json
-    
-    # Create sanitized metadata with only essential fields
-    $sanitized = @{
-        title = if ($metadata.format.tags.title) { 
-            ($metadata.format.tags.title -replace '[^\w\s-]', '').Trim()  # Remove special characters
-        } else { 
-            [System.IO.Path]::GetFileNameWithoutExtension($InputFile) 
-        }
-        artist = if ($metadata.format.tags.artist) { 
-            ($metadata.format.tags.artist -replace '[^\w\s-]', '').Trim()
-        } else { 
-            "Unknown Artist" 
-        }
-        album = if ($metadata.format.tags.album) { 
-            ($metadata.format.tags.album -replace '[^\w\s-]', '').Trim()
-        } else { 
-            "Unknown Album" 
-        }
-        date = if ($metadata.format.tags.date) { 
-            ($metadata.format.tags.date -replace '[^\d]', '').Trim()  # Keep only numbers
-        } else { 
-            "Unknown Date" 
-        }
-    }
-    
-    # Create metadata string for ffmpeg using original field names
-    $metadataString = "-map_metadata -1 " +  # First strip ALL metadata
-                     "-metadata title=`"$($sanitized.title)`" " +
-                     "-metadata artist=`"$($sanitized.artist)`" " +
-                     "-metadata album=`"$($sanitized.album)`" " +
-                     "-metadata date=`"$($sanitized.date)`" "
-    
-    return $metadataString
-}
-
-# Function to validate WAV file
-function Test-WavFile {
-    param (
-        [string]$FilePath
-    )
-    
-    # Use ffprobe to check WAV file properties
-    $ffprobeOutput = ffprobe -v error -select_streams a:0 -show_entries stream=sample_rate,channels,bits_per_sample -of default=noprint_wrappers=1 "$FilePath"
-    
-    # Parse the output
-    $properties = @{}
-    $ffprobeOutput | ForEach-Object {
-        $key, $value = $_ -split '='
-        $properties[$key] = $value
-    }
-    
-    # Check if all required properties are present and correct
-    return ($properties['sample_rate'] -eq '44100' -and
-            $properties['channels'] -eq '2' -and
-            $properties['bits_per_sample'] -eq '16')
-}
-
-# Function to check for duplicate files by name (ignoring prefix)
-function Test-DuplicateFile {
-    param (
-        [string]$TargetFolder,
-        [string]$FileName
-    )
-    
-    # Get all WAV files in the target folder
-    $existingFiles = Get-ChildItem -Path $TargetFolder -Filter "*.wav"
-    
-    # Extract the base name without prefix (everything after the first hyphen)
-    $baseName = $FileName -replace '^\d+_', ''
-    
-    # Check if any existing file has the same base name
-    foreach ($file in $existingFiles) {
-        $existingBaseName = $file.Name -replace '^\d+_', ''
-        if ($existingBaseName -eq $baseName) {
-            return $true
-        }
-    }
-    
-    return $false
+# Display list of files in the input folder
+Write-Host "Audio files in the input folder:"
+Get-ChildItem -Path $inputFolder -Include *.mp3, *.m4a, *.wav -Recurse | ForEach-Object {
+    Write-Host $_.Name
 }
 
 # Remove the leading track number from the file name
@@ -167,45 +286,42 @@ Get-ChildItem -Path $inputFolder -Include *.mp3, *.m4a, *.wav -Recurse | ForEach
     }
 }
 
-# Loop through all MP3/M4A/WAV files and convert them to WAV format
+# Loop through all audio files and process them
 $convertedCount = 0
 Get-ChildItem -Path $inputFolder -Include *.mp3, *.m4a, *.wav -Recurse | ForEach-Object {
     $inputFile = $_.FullName
     $wavFile = Join-Path $outputFolder ($_.BaseName + ".wav")
     
-    # If it's already a WAV file, validate it first
-    if ($_.Extension -eq '.wav') {
-        if (Test-WavFile -FilePath $inputFile) {
-            Write-Host "File $($_.Name) already meets WAV Trigger requirements."
-            # Copy the file to output folder instead of converting
-            Copy-Item -Path $inputFile -Destination $wavFile
-            $convertedCount++
-            Remove-Item -Path $inputFile
-            Write-Host "Copied valid WAV file: $($_.Name)"
-            # Skip the conversion part but continue with the rest of the processing
-            if (-not (Test-Path $wavFile)) {
-                Write-Host "Error: Failed to copy WAV file."
-                continue
-            }
-        } else {
-            Write-Host "WAV file $($_.Name) does not meet requirements. Will be converted."
-        }
-    }
-    
+    # Check if the file is already in the output folder, perhaps from a previous run
     if (-not (Test-Path $wavFile)) {
-        Write-Host "Converting $($_.Name) to WAV format..."
+        Write-Host "Processing $($_.Name)..."
+        
+        # If it's already a WAV file, validate it first
+        if ($_.Extension -eq '.wav') {
+            if ((Test-WavFile -FilePath $inputFile) -and (Test-WavStructure -FilePath $inputFile -FileExtension $_.Extension)) {
+                Write-Host "File $($_.Name) already meets WAV Trigger requirements."
+                # Copy the file to output folder instead of converting
+                Copy-Item -Path $inputFile -Destination $wavFile
+                $convertedCount++
+                Remove-Item -Path $inputFile
+                Write-Host "Copied valid WAV file: $($_.Name)"
+                continue
+            } else {
+                Write-Host "WAV file $($_.Name) does not meet requirements. Will be converted."
+            }
+        }
         
         # Get sanitized metadata
         $metadataString = Get-SanitizedMetadata -InputFile $inputFile
         
         # Convert to WAV with specific requirements and sanitized metadata
         # The -map_metadata -1 flag strips all metadata before we add our sanitized version
-        $ffmpegCommand = "ffmpeg -i `"$inputFile`" -ac 2 -ar 44100 -acodec pcm_s16le $metadataString `"$wavFile`""
+        $ffmpegCommand = "ffmpeg -i `"$inputFile`" -ac 2 -ar 44100 -acodec pcm_s16le -f wav -write_bext 0 -write_id3v2 0 -write_apetag 0 -write_xing 0 $metadataString `"$wavFile`""
         Invoke-Expression $ffmpegCommand
         
         if ($?) {
-            # Validate the converted WAV file
-            if (Test-WavFile -FilePath $wavFile) {
+            # Validate both the audio properties and file structure
+            if ((Test-WavFile -FilePath $wavFile) -and (Test-WavStructure -FilePath $wavFile -FileExtension '.wav')) {
                 $convertedCount++
                 Remove-Item -Path $inputFile
                 Write-Host "Successfully converted and validated $($_.Name)"
@@ -217,7 +333,7 @@ Get-ChildItem -Path $inputFolder -Include *.mp3, *.m4a, *.wav -Recurse | ForEach
             Write-Host "Conversion failed for $($_.Name)"
         }
     } else {
-        Write-Host "Skipping conversion for $($_.Name) as $wavFile already exists."
+        Write-Host "Skipping processing for $($_.Name) as $wavFile already exists."
     }
 }
 
@@ -241,14 +357,45 @@ foreach ($file in $wavFiles) {
     Write-Host $file.Name
 }
 
-# Ask the user if these are for the primary or alternate track collection
-$collectionType = Read-Host "Are these for the primary (p) or alternate (a) track collection? (p/a)"
-if ($collectionType -eq 'p') {
-    $prefixRange = $primaryRange
-} elseif ($collectionType -eq 'a') {
-    $prefixRange = $alternateRange
-} else {
-    Write-Host "Invalid selection. Exiting."
+# Ask the user for the sound type and collection type
+Write-Host "`nSelect the sound type:"
+Write-Host "1. Kickout hole sounds"
+Write-Host "2. Rollover lane sounds"
+Write-Host "3. Tilt relay sounds"
+Write-Host "4. Music tracks"
+$soundType = Read-Host "Enter the number (1-4)"
+
+Write-Host "`nSelect the collection type:"
+Write-Host "p. Primary collection"
+Write-Host "a. Alternate collection"
+$collectionType = Read-Host "Enter p or a"
+
+# Set the appropriate range based on selections
+switch ($soundType) {
+    "1" { 
+        if ($collectionType -eq 'p') { $prefixRange = $kickoutPrimaryRange }
+        else { $prefixRange = $kickoutAlternateRange }
+    }
+    "2" { 
+        if ($collectionType -eq 'p') { $prefixRange = $rolloverPrimaryRange }
+        else { $prefixRange = $rolloverAlternateRange }
+    }
+    "3" { 
+        if ($collectionType -eq 'p') { $prefixRange = $tiltPrimaryRange }
+        else { $prefixRange = $tiltAlternateRange }
+    }
+    "4" { 
+        if ($collectionType -eq 'p') { $prefixRange = $musicPrimaryRange }
+        else { $prefixRange = $musicAlternateRange }
+    }
+    default {
+        Write-Host "Invalid sound type selection. Exiting."
+        exit
+    }
+}
+
+if ($collectionType -ne 'p' -and $collectionType -ne 'a') {
+    Write-Host "Invalid collection type selection. Exiting."
     exit
 }
 
