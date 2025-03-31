@@ -53,8 +53,24 @@ $tiltAlternateRange = 70..79
 $musicPrimaryRange = 101..199
 $musicAlternateRange = 201..299
 
-# Future enhancements:
-# - Add support for additional collection ranges
+# Behavior Option Flags:
+# - Remove leading track numbers from file names
+$optionRemoveLeadingTrackNumbers = $true
+
+# - Sanitize metadata
+$optionSanitizeMetadata = $true
+
+# - Validate WAV file properties and structure
+$optionValidateWavFile = $true
+
+# - Check for duplicate files by name (ignoring prefix)
+$optionCheckForDuplicateFiles = $true
+
+# - Display ffmpeg configuratoin header
+$optionDisplayFfmpegConfigHeader = $true
+
+# - Display list of files in the input folder
+$optionDisplayInputFiles = $true
 
 
 # Function to sanitize metadata
@@ -114,6 +130,14 @@ function Get-SanitizedMetadata {
             ""
         }
     }
+    
+    # Display metadata in debug mode
+    Write-Debug "`nExtracted metadata for $([System.IO.Path]::GetFileName($InputFile)):"
+    Write-Debug "----------------------------------------"
+    $sanitized.GetEnumerator() | ForEach-Object {
+        Write-Debug "$($_.Key): $($_.Value)"
+    }
+    Write-Debug "----------------------------------------`n"
     
     # Create metadata string for ffmpeg using original field names
     $metadataString = "-map_metadata -1 " +  # First strip ALL metadata
@@ -234,70 +258,199 @@ function Test-DuplicateFile {
     return $false
 }
 
+function queryPrefixRange {
+    Write-Host "`nThe target files will be named with a 3-digit prefix corresponding to the sound type and collection type."
+    Write-Host "`nSelect the sound type:"
+    Write-Host "1. Kickout hole sounds"
+    Write-Host "2. Rollover lane sounds"
+    Write-Host "3. Tilt relay sounds"
+    Write-Host "4. Music tracks"
+    $soundType = Read-Host "Enter the number (1-4)"
+
+    Write-Host "`nSelect the collection type:"
+    Write-Host "p. Primary collection"
+    Write-Host "a. Alternate collection"
+    $collectionType = Read-Host "Enter p or a"
+
+    # Set the appropriate range based on selections
+    switch ($soundType) {
+        "1" { 
+            if ($collectionType -eq 'p') { 
+                $prefixRange = $kickoutPrimaryRange 
+                Write-Host "Selected sound type: Kickout hole sounds (Primary collection)"
+            }
+            else { 
+                $prefixRange = $kickoutAlternateRange 
+                Write-Host "Selected sound type: Kickout hole sounds (Alternate collection)"
+            }
+        }
+        "2" { 
+            if ($collectionType -eq 'p') { 
+                $prefixRange = $rolloverPrimaryRange 
+                Write-Host "Selected sound type: Rollover lane sounds (Primary collection)"
+            }
+            else { 
+                $prefixRange = $rolloverAlternateRange 
+                Write-Host "Selected sound type: Rollover lane sounds (Alternate collection)"
+            }
+        }
+        "3" { 
+            if ($collectionType -eq 'p') { 
+                $prefixRange = $tiltPrimaryRange 
+                Write-Host "Selected sound type: Tilt relay sounds (Primary collection)"
+            }
+            else { 
+                $prefixRange = $tiltAlternateRange 
+                Write-Host "Selected sound type: Tilt relay sounds (Alternate collection)"
+            }
+        }
+        "4" { 
+            if ($collectionType -eq 'p') { 
+                $prefixRange = $musicPrimaryRange 
+                Write-Host "Selected sound type: Music tracks (Primary collection)"
+            }
+                else { 
+                $prefixRange = $musicAlternateRange 
+                Write-Host "Selected sound type: Music tracks (Alternate collection)"
+            }
+        }
+        default {
+            Write-Host "Invalid sound type selection."
+            Write-Host "Would you like to enter the prefix range manually?"
+            $confirmation = Read-Host "Enter y or n"
+            if ($confirmation -eq 'y') {
+                Write-Host "Please enter the prefix range as a comma-separated list of numbers."
+                $prefixRange = Read-Host "Enter the prefix range"
+            } else {
+                $prefixRange = @()
+                exit
+            }
+        }
+    }
+    return $prefixRange
+}
+
 ########################################################################################
 # Main Script starts here
 ########################################################################################
 
 # Welcome message
-Write-Host "Welcome to the WAV Maker script!"
+Write-Host "`nWelcome to the WAV Maker script!" -ForegroundColor Green
 Write-Host "This script processes audio files to meet WAV Trigger requirements."
 Write-Host "  (16-bit PCM, 44.1 kHz, stereo)"
+
+# To enable debug mode, set $DebugPreference to Continue from the PowerShell command line
+# to disable debug mode, set $DebugPreference to SilentlyContinue from the PowerShell command line
+Write-Debug "`nDebug mode is enabled."
 
 # Check if ffmpeg is accessible
 $ffmpegLocation = Get-Command ffmpeg -ErrorAction SilentlyContinue
 if (-not $ffmpegLocation) {
-    Write-Host "ffmpeg is not installed or not accessible. Please install it and try again."
+    Write-Host "ffmpeg is not installed or not accessible. Please install it and try again." -ForegroundColor Red
     exit
 } else {
-    Write-Host "Found ffmpeg at: $($ffmpegLocation.Source)"
+    Write-Debug "Using ffmpeg found at: $($ffmpegLocation.Source)"
 }
 
 # Create output folder if it doesn't exist
 if (-not (Test-Path $outputFolder)) {
     New-Item -ItemType Directory -Path $outputFolder
+    Write-Host "Output folder created: $outputFolder"
+} else {
+    Write-Debug "Using output folder: $outputFolder"
 }
 
-# Check that the target folder exists
-if (-not (Test-Path $targetFolder)) {
-    New-Item -ItemType Directory -Path $targetFolder
-}
-
-# Display list of files in the input folder
-Write-Host "Audio files in the input folder:"
-Get-ChildItem -Path $inputFolder -Include *.mp3, *.m4a, *.wav -Recurse | ForEach-Object {
-    Write-Host $_.Name
-}
-
-# Remove the leading track number from the file name
-Get-ChildItem -Path $inputFolder -Include *.mp3, *.m4a, *.wav -Recurse | ForEach-Object {
-    Write-Host "Processing file: $($_.Name)"
-    # Check if the file name starts with a track number
-    if ($_.Name -match '^\d+[-\s\.]?\d*\s*') {
-        $newName = $_.Name -replace '^\d+[-\s\.]?\d*\s*', ''
-        Write-Host "This file has a leading number:"
-        Write-Host "Old Name: $($_.Name)"
-        Write-Host "New Name: $newName"
-        $confirmation = Read-Host "Do you want to rename this file? (y/n)"
+# Ensure that the target folder exists
+$validTargetFolder = $false
+while (-not $validTargetFolder) {
+    if (-not (Test-Path $targetFolder)) {
+        Write-Host "Target folder does not exist at $targetFolder" -ForegroundColor Yellow
+        Write-Host "Would you like to create this folder or specify a different folder?"
+        $confirmation = Read-Host "Enter y to create the folder or n to specify a different folder"
         if ($confirmation -eq 'y') {
-            Rename-Item -Path $_.FullName -NewName $newName
+            New-Item -ItemType Directory -Path $targetFolder
+            Write-Host "Target folder created: $targetFolder"
+            $validTargetFolder = $true
         } else {
-            Write-Host "Skipping rename for: $($_.Name)"
+            Write-Host "Please specify a different target folder."
+            $targetFolder = Read-Host "Enter the target folder"
+            if (Test-Path $targetFolder) {
+                $validTargetFolder = $true
+            }
         }
+    } else {
+        Write-Debug "Using target folder: $targetFolder"
+        $validTargetFolder = $true
     }
 }
 
+# Display list of files in the input folder
+if ($optionDisplayInputFiles) {
+    Write-Host "Audio files in the input folder:" -ForegroundColor Green
+    Get-ChildItem -Path $inputFolder -Include *.mp3, *.m4a, *.wav -Recurse | ForEach-Object {
+        Write-Host " ", $_.Name -ForegroundColor Blue
+    }
+    Write-Host "Would you like to continue processing these files? (y/n)"
+    $confirmation = Read-Host "Enter y or n"
+    if ($confirmation -eq 'n') {
+        Write-Host "Exiting."
+        exit
+    }
+}
+
+# Query the user for the prefix range
+while ($prefixRange.Count -eq 0) {
+    $prefixRange = queryPrefixRange
+    Write-Debug "Prefix range: $prefixRange"
+}
+
+# Clean up the input folder before the conversion process so that we're entering with clean filenames
+if ($optionRemoveLeadingTrackNumbers) {
+    Write-Host "`nRemoving leading disc/track numbers from input files..." -ForegroundColor Green
+    Get-ChildItem -Path $inputFolder -Include *.mp3, *.m4a, *.wav -Recurse | ForEach-Object {
+        if ($_.Name -match '^\d+[-\s\.]?\d*\s*') {
+            $newName = $_.Name -replace '^\d+[-\s\.]?\d*\s*', ''
+        Write-Host "This file appears to have a leading disc/track number that will be removed:"
+        Write-Host " Old Name: $($_.Name)"
+        Write-Host " New Name: $newName"
+
+        # Commented out for now, just rename the file without asking for confirmation
+        # $confirmation = Read-Host "Do you want to rename this file? (y/n)"
+        $confirmation = 'y'
+        if ($confirmation -eq 'y') {
+            Rename-Item -Path $_.FullName -NewName $newName
+            # Update the inputFile variable to the new name
+            $inputFile = Join-Path $inputFolder $newName
+        } else {
+            Write-Host "Skipping rename for: $($_.Name)"
+        }
+    } else {
+        Write-Debug "No leading disc/track numbers found in: $($_.Name)"
+    }
+    }
+} # End of removing leading disc/track numbers
+
 # Loop through all audio files and process them
 $convertedCount = 0
+Write-Host "`nProcessing audio files..." -ForegroundColor Green
 Get-ChildItem -Path $inputFolder -Include *.mp3, *.m4a, *.wav -Recurse | ForEach-Object {
+    Write-Host "`nProcessing file: $($_.Name)" -ForegroundColor Blue
+
+    # Get the input file path
     $inputFile = $_.FullName
+    Write-Debug "Input file: $inputFile"
+
+    # Create the WAV file target path
     $wavFile = Join-Path $outputFolder ($_.BaseName + ".wav")
-    
+    Write-Debug "WAV file target: $wavFile"
+
     # Check if the file is already in the output folder, perhaps from a previous run
     if (-not (Test-Path $wavFile)) {
         Write-Host "Processing $($_.Name)..."
         
         # If it's already a WAV file, validate it first
         if ($_.Extension -eq '.wav') {
+            Write-Debug "File is already a WAV file: $($_.Name)"
             if ((Test-WavFile -FilePath $inputFile) -and (Test-WavStructure -FilePath $inputFile -FileExtension $_.Extension)) {
                 Write-Host "File $($_.Name) already meets WAV Trigger requirements."
                 # Copy the file to output folder instead of converting
@@ -314,17 +467,27 @@ Get-ChildItem -Path $inputFolder -Include *.mp3, *.m4a, *.wav -Recurse | ForEach
         # Get sanitized metadata
         $metadataString = Get-SanitizedMetadata -InputFile $inputFile
         
-        # Convert to WAV with specific requirements and sanitized metadata
+        # Some existing source material may have extraineous metadata that we don't want to include
         # The -map_metadata -1 flag strips all metadata before we add our sanitized version
-        $ffmpegCommand = "ffmpeg -i `"$inputFile`" -ac 2 -ar 44100 -acodec pcm_s16le -f wav -write_bext 0 -write_id3v2 0 -write_apetag 0 -write_xing 0 $metadataString `"$wavFile`""
+
+        # The optional -hide_banner command suppresses the ffmpeg banner and is controlled by the $optionDisplayFfmpegConfigHeader flag
+        if ($optionDisplayFfmpegConfigHeader) {
+            $ffmmpegConfigHeader = "-hide_banner"
+        } else {
+            $ffmmpegConfigHeader = ""
+        }
+
+        $ffmpegCommand = "ffmpeg -i `"$inputFile`" $ffmmpegConfigHeader -ac 2 -ar 44100 -acodec pcm_s16le -f wav -write_bext 0 -write_id3v2 0 -write_apetag 0 -write_xing 0 $metadataString `"$wavFile`""
+        Write-Debug "FFMPEG command: $ffmpegCommand"
         Invoke-Expression $ffmpegCommand
         
         if ($?) {
+            Write-Debug "FFMPEG command completed successfully"
             # Validate both the audio properties and file structure
             if ((Test-WavFile -FilePath $wavFile) -and (Test-WavStructure -FilePath $wavFile -FileExtension '.wav')) {
+                Write-Host "Successfully converted and validated $($_.Name)"
                 $convertedCount++
                 Remove-Item -Path $inputFile
-                Write-Host "Successfully converted and validated $($_.Name)"
             } else {
                 Write-Host "WAV file validation failed for $($_.Name). The file may not meet WAV Trigger requirements."
                 Remove-Item -Path $wavFile
@@ -333,71 +496,31 @@ Get-ChildItem -Path $inputFolder -Include *.mp3, *.m4a, *.wav -Recurse | ForEach
             Write-Host "Conversion failed for $($_.Name)"
         }
     } else {
-        Write-Host "Skipping processing for $($_.Name) as $wavFile already exists."
+        Write-Host "Skipping processing for $($_.Name) as $wavFile already exists in the output folder." -ForegroundColor Yellow
     }
-}
+} # End of processing audio files
 
 # Check if any files were converted
 if ($convertedCount -eq 0) {
-    Write-Host "No files were converted."
+    Write-Host "`nNo files were converted." -ForegroundColor Yellow
     exit
+} else {
+    Write-Host "`n$convertedCount files were converted to WAV format." -ForegroundColor Green
 }
-Write-Host "$convertedCount files were converted to WAV format."
 
 # Get the list of WAV files in the output folder
 $wavFiles = Get-ChildItem -Path $outputFolder -Filter *.wav
 if ($wavFiles.Count -eq 0) {
-    Write-Host "No WAV files found in the output folder."
+    Write-Host "`nNo WAV files found in the output folder." -ForegroundColor Yellow
     exit
-}
-
-# Display the list of WAV files
-Write-Host "WAV files in the output folder:"
-foreach ($file in $wavFiles) {
-    Write-Host $file.Name
-}
-
-# Ask the user for the sound type and collection type
-Write-Host "`nSelect the sound type:"
-Write-Host "1. Kickout hole sounds"
-Write-Host "2. Rollover lane sounds"
-Write-Host "3. Tilt relay sounds"
-Write-Host "4. Music tracks"
-$soundType = Read-Host "Enter the number (1-4)"
-
-Write-Host "`nSelect the collection type:"
-Write-Host "p. Primary collection"
-Write-Host "a. Alternate collection"
-$collectionType = Read-Host "Enter p or a"
-
-# Set the appropriate range based on selections
-switch ($soundType) {
-    "1" { 
-        if ($collectionType -eq 'p') { $prefixRange = $kickoutPrimaryRange }
-        else { $prefixRange = $kickoutAlternateRange }
+} else {
+    Write-Host "`nResulting WAV files in the output folder:"
+    foreach ($file in $wavFiles) {
+        Write-Host " ", $file.Name -ForegroundColor Blue
     }
-    "2" { 
-        if ($collectionType -eq 'p') { $prefixRange = $rolloverPrimaryRange }
-        else { $prefixRange = $rolloverAlternateRange }
-    }
-    "3" { 
-        if ($collectionType -eq 'p') { $prefixRange = $tiltPrimaryRange }
-        else { $prefixRange = $tiltAlternateRange }
-    }
-    "4" { 
-        if ($collectionType -eq 'p') { $prefixRange = $musicPrimaryRange }
-        else { $prefixRange = $musicAlternateRange }
-    }
-    default {
-        Write-Host "Invalid sound type selection. Exiting."
-        exit
-    }
-}
+} # End of listing WAV files in the output folder
 
-if ($collectionType -ne 'p' -and $collectionType -ne 'a') {
-    Write-Host "Invalid collection type selection. Exiting."
-    exit
-}
+Write-Host "`nMoving and renaming files to the target folder..." -ForegroundColor Green
 
 # Move WAV files to the target folder with 3-digit prefix
 $prefixIndex = 0
@@ -409,13 +532,16 @@ Get-ChildItem -Path $outputFolder -Filter *.wav | ForEach-Object {
     
     # Check for duplicate files by name (ignoring prefix)
     if (Test-DuplicateFile -TargetFolder $targetFolder -FileName $targetName) {
-        Write-Host "Warning: A file with the same name already exists in the target folder:"
+        Write-Host "Warning: A file with the same name already exists in the target folder:" -ForegroundColor Yellow
         Write-Host "File: $($_.Name)"
-        $confirmation = Read-Host "Do you want to skip this file? (y/n)"
+        $confirmation = Read-Host "Do you want to delete the existing file? (y/n)"
         if ($confirmation -eq 'y') {
-            Write-Host "Skipping duplicate file: $($_.Name)"
-            continue
+            Remove-Item -Path $wavFile
+            Write-Host "Deleted existing file: $($_.Name)"
+        } else {
+            Write-Host "A conflict exists for this file: $($_.Name)" -ForegroundColor Red
         }
+
     }
     
     # Check if a file with the target prefix already exists
@@ -430,7 +556,7 @@ Get-ChildItem -Path $outputFolder -Filter *.wav | ForEach-Object {
         $targetPath = Join-Path $targetFolder $targetName
     }
 
-    Write-Host "Old Name: $($_.Name)"
+    Write-Host "Working Name: $($_.Name)"
     Write-Host "Target Name: $targetName"
     $confirmation = Read-Host "Do you want to move and rename this file? (y/n)"
     if ($confirmation -eq 'y') {
@@ -439,9 +565,8 @@ Get-ChildItem -Path $outputFolder -Filter *.wav | ForEach-Object {
     } else {
         Write-Host "Skipping file: $($_.Name)"
     }
-}
+} # End of moving and renaming files
 
-Write-Host "All files have been processed as directed."
+Write-Host "`nAll files have been processed as directed." -ForegroundColor Green
 Write-Host "Please check the target folder for the newly renamed and organized files."
 Write-Host "Thank you for using the WAV Maker script!"
-
