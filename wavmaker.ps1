@@ -68,21 +68,25 @@ $optionValidateWavFile = $true
 # - Check for duplicate files by name (ignoring prefix)
 $optionCheckForDuplicateFiles = $true
 
-# - Display ffmpeg configuratoin header
-$optionDisplayFfmpegConfigHeader = $true
+# - Display ffmpeg configuration header
+$optionDisplayFfmpegConfigHeader = $false
 
 # - Display list of files in the input folder
 $optionDisplayInputFiles = $true
-
-# - Use an intermediary file format for post-processing with audacity
-# - Make this a null string if you don't want to use an intermediary file format
-$optionIntermediaryFileFormat = "FLAC"
 
 # - Default conversion software to use, ffmpeg or sox or audacity
 $optionDefaultConversionSoftware = "ffmpeg"
 
 # - Default post-processing software to use, sox or audacity
 $optionDefaultPostProcessingSoftware = "audacity"
+
+# - Use an intermediary file format for post-processing with audacity
+# - Make this a null string if you don't want to use an intermediary file format
+$optionIntermediaryFileFormat = "FLAC"
+
+# - Copy valid WAV files to the target folder
+# - If this is set not true then all WAV files will be reprocessed and not validated & copied
+$optionCopyValidWAVs = $false
 
 # - Audacity macro folder
 $optionAudacityMacroFolder = "%AppData%\Roaming\audacity\Macros"
@@ -268,15 +272,20 @@ function Test-DuplicateFile {
         [string]$FileName
     )
     
+    Write-Debug "Checking for duplicate files in $TargetFolder"
+    Write-Debug "File name: $FileName"
+
     # Get all WAV files in the target folder
     $existingFiles = Get-ChildItem -Path $TargetFolder -Filter "*.wav"
     
     # Extract the base name without prefix (everything after the first underscore)
-    $baseName = $FileName -replace '^\d+_', ''
+    $baseName = $FileName -replace '^\d+[_-]', ''
+    Write-Debug "Base name: $baseName"
     
     # Check if any existing file has the same base name
     foreach ($file in $existingFiles) {
-        $existingBaseName = $file.Name -replace '^\d+_', ''
+        $existingBaseName = $file.Name -replace '^\d+[_-]', ''
+        Write-Debug "Existing base name: $existingBaseName"
         if ($existingBaseName -eq $baseName) {
             return @{
                 HasConflict = $true
@@ -423,6 +432,27 @@ if (-not $audacityLocation) {
     exit
 }
 
+# Check that the AutoWAVMaker macro exists
+$audacityMacroLocation = Join-Path $env:APPDATA "audacity\Macros\AutoWAVMaker.txt"
+if (-not (Test-Path $audacityMacroLocation)) {
+    Write-Host "AutoWAVMaker macro does not exist at $audacityMacroLocation"
+    Write-Host "Would you like me to attempt to create it for you?"
+    $confirmation = Read-Host "Enter y or n"
+    if ($confirmation -eq 'y') {
+        New-Item -ItemType File -Path $audacityMacroLocation
+        # Write the AutoWAVMaker macro content
+        @"
+SelectAll:
+Normalize:ApplyVolume="1" PeakLevel="-1" RemoveDcOffset="1" StereoIndependent="0"
+ExportWav:
+"@ | Out-File -FilePath $audacityMacroLocation -Encoding UTF8
+
+        Write-Host "AutoWAVMaker macro created at $audacityMacroLocation" -ForegroundColor Green
+    } else {
+        Write-Debug "AutoWAVMaker macro does not exist at $audacityMacroLocation"
+    }
+}
+
 # Create output folder if it doesn't exist
 if (-not (Test-Path $outputFolder)) {
     New-Item -ItemType Directory -Path $outputFolder
@@ -482,7 +512,6 @@ if ($optionDisplayInputFiles) {
 # Query the user for the prefix range
 while ($prefixRange.Count -eq 0) {
     $prefixRange = queryPrefixRange
-    Write-Debug "Prefix range: $prefixRange"
 }
 
 # Clean up the input folder before the conversion process so that we're entering with clean filenames
@@ -530,7 +559,10 @@ Get-ChildItem -Path $inputFolder -Include *.mp3, *.m4a, *.wav -Recurse | ForEach
         Write-Host "Processing $($_.Name)..."
         
         # If it's already a WAV file, validate it first
-        if ($_.Extension -eq '.wav') {
+        # My validation tests are not fully reliable, so we'll not skip processing if it's already a WAV file
+        # We'll let the user decide if they want to skip validation
+
+        if ($_.Extension -eq '.wav' -and $optionCopyValidWAVs -eq $true) {
             Write-Debug "File is already a WAV file: $($_.Name)"
             if ((Test-WavFile -FilePath $inputFile) -and (Test-WavStructure -FilePath $inputFile -FileExtension $_.Extension)) {
                 Write-Host "File $($_.Name) already meets WAV Trigger requirements."
@@ -554,9 +586,9 @@ Get-ChildItem -Path $inputFolder -Include *.mp3, *.m4a, *.wav -Recurse | ForEach
 
         # The optional -hide_banner command suppresses the ffmpeg banner and is controlled by the $optionDisplayFfmpegConfigHeader flag
         if ($optionDisplayFfmpegConfigHeader) {
-            $ffmpegConfigHeader = "-hide_banner"
-        } else {
             $ffmpegConfigHeader = ""
+        } else {
+            $ffmpegConfigHeader = "-hide_banner"
         }
 
         if ($optionDefaultConversionSoftware -eq "ffmpeg") {
@@ -586,7 +618,6 @@ Get-ChildItem -Path $inputFolder -Include *.mp3, *.m4a, *.wav -Recurse | ForEach
             # Confirm that the file was created
             if (Test-Path $outputFile) {
                 Write-Debug "Successfully created audio file: $outputFile" 
-                # Now let's process the file with sox to ensure it's a valid WAV file
                 Write-Debug "`nAudio file properties after ffmpeg conversion:"
                 $preProcessingInfo = ffprobe -v quiet -print_format json -show_format -show_streams "$outputFile" | ConvertFrom-Json
                 Write-Debug " File size: $([math]::Round($preProcessingInfo.format.size / 1MB, 2)) MB"
@@ -612,8 +643,7 @@ Get-ChildItem -Path $inputFolder -Include *.mp3, *.m4a, *.wav -Recurse | ForEach
                     }
 
                 } elseif ($optionDefaultPostProcessingSoftware -eq "audacity") {
-                    # The audacity macro will save the file with the same name as the original file but with a .wav extension
-                    Write-Host "Opening file in Audacity. Please execute the macro manually and close Audacity when done."
+                    Write-Host "Opening file in Audacity. Please execute the AutoWAVMakermacro manually and close Audacity when done."
                     Start-Process -FilePath $audacityLocation -ArgumentList "`"$(Resolve-Path $inputFile)`"" -Wait
                     Write-Debug "Audacity process completed"
                     $audacityOutputFile = Join-Path $env:USERPROFILE "OneDrive\Documents\Audacity\macro-output" "$($_.BaseName).wav"
@@ -621,7 +651,7 @@ Get-ChildItem -Path $inputFolder -Include *.mp3, *.m4a, *.wav -Recurse | ForEach
                     if (Test-Path $audacityOutputFile) {
                         Write-Debug "Audacity output file exists: $audacityOutputFile"
                         Write-Debug "Moving file to working output folder"
-                        Move-Item -Path $audacityOutputFile -Destination $outputFolder
+                        Move-Item -Path $audacityOutputFile -Destination $outputFolder -Force
                         Write-Debug "Removing original output file"
                         Remove-Item -Path $outputFile
                         $outputFile = $outputFile -replace "\.flac$", ".wav"
@@ -635,7 +665,7 @@ Get-ChildItem -Path $inputFolder -Include *.mp3, *.m4a, *.wav -Recurse | ForEach
                 } else {
                     Write-Debug "Output file does not exist: $outputFile" -ForegroundColor Red
                 }
-                # Confirm that the tempfile exists
+
                 Write-Debug "`nPost-processing audio file properties:"
                 $postProcessingInfo = ffprobe -v quiet -print_format json -show_format -show_streams "$outputFile" | ConvertFrom-Json
                 Write-Debug "File size: $([math]::Round($postProcessingInfo.format.size / 1MB, 2)) MB"
@@ -655,7 +685,6 @@ Get-ChildItem -Path $inputFolder -Include *.mp3, *.m4a, *.wav -Recurse | ForEach
                         Write-Host "WAV file validation failed for $($_.Name). The file may not meet WAV Trigger requirements." -ForegroundColor Red
                         Remove-Item -Path $outputFile
                     }
-                
             } else {
                 Write-Host "Failed to create audio file: $outputFile" -ForegroundColor Red
             }
@@ -690,13 +719,17 @@ if ($wavFiles.Count -eq 0) {
 Write-Host "`nMoving and renaming files to the target folder..." -ForegroundColor Green
 
 # Move WAV files to the target folder with 3-digit prefix
-$prefixIndex = 0
+# We have a defined prefix range, so we need to find the next available prefix in the target folder for each file
+# We will use the prefix index to find the next available prefix in the target folder
+$prefixIndex = 0    # Start at the first prefix in the range
 Get-ChildItem -Path $outputFolder -Filter *.wav | ForEach-Object {
+    # Each time we move to the next file, the index picks up where it left off
     $wavFile = $_.FullName
     $prefix = $prefixRange[$prefixIndex]
     $targetName = "{0:D3}_{1}" -f $prefix, $_.Name
+    Write-Debug "Starting target name: $targetName"
     $targetPath = Join-Path $targetFolder $targetName
-    
+
     # Check for duplicate files by name (ignoring prefix)
     $duplicateCheck = Test-DuplicateFile -TargetFolder $targetFolder -FileName $targetName
     if ($duplicateCheck.HasConflict) {
@@ -708,20 +741,24 @@ Get-ChildItem -Path $outputFolder -Filter *.wav | ForEach-Object {
             Remove-Item -Path $duplicateCheck.ConflictingFile
             Write-Host "Deleted existing file: $($duplicateCheck.ConflictingName)"
         } else {
-            Write-Host "A conflict exists for this file: $($_.Name)" -ForegroundColor Red
+            Write-Host "A conflict exists for this file: $targetName"
             continue
         }
+    } else {
+        Write-Debug "No duplicate files found for $($_.Name)"
     }
-    
+
     # Check if a file with the target prefix already exists
-    while (Get-ChildItem -Path $targetFolder -Filter "$prefix-*.wav") {
+    while (Test-Path (Join-Path $targetFolder "$($prefix.ToString('D3'))*.wav")) {
         $prefixIndex++
         if ($prefixIndex -ge $prefixRange.Count) {
-            Write-Host "No more available prefixes in the selected range. Exiting."
+            Write-Host "No more available prefixes in the selected range. Exiting." -ForegroundColor Red
+            Write-Host "We were targeting the scope of $($prefixRange[0]..$prefixRange[-1]), so maybe free up some space in the target range and try again."
             exit
         }
         $prefix = $prefixRange[$prefixIndex]
         $targetName = "{0:D3}_{1}" -f $prefix, $_.Name
+        Write-Debug "Trying target name: $targetName"
         $targetPath = Join-Path $targetFolder $targetName
     }
 
