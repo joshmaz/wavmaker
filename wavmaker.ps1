@@ -3,6 +3,9 @@
 # date: 2025-03-28
 # version: 1.10
 
+[CmdletBinding()]
+param()
+
 # This script processes audio files to meet WAV Trigger requirements:
 # - 16-bit PCM
 # - 44.1 kHz sample rate
@@ -32,6 +35,7 @@ $outputFolder = ".\WAVs"
 # This is the folder that will contain the WAV files after they are converted and renamed with the 3-digit prefix
 $targetFolder = "C:\Users\joshm\OneDrive\Documents\WAV Trigger\Chicago Coin Playboy"
 # The Target Folder will be unique for each project, so it will need to be set for each project
+# In my workflow, this target folder contains everything that will be uploaded to the WAV Trigger via the microSD card
 # The script will check for the existence of the target folder and will prompt the user to create it or specify a different folder
 
 # Set range numbers for primary and alternate track collections
@@ -55,7 +59,10 @@ $tiltAlternateRange = 70..79
 $musicPrimaryRange = 101..199
 $musicAlternateRange = 201..299
 
+# I used behavior flags to make the script more flexible and easier to modify
+# A proper command line interface would be better, but this is a quick and dirty solution
 # Behavior Option Flags:
+
 # - Remove leading track numbers from file names
 $optionRemoveLeadingTrackNumbers = $true
 
@@ -74,6 +81,9 @@ $optionDisplayFfmpegConfigHeader = $false
 # - Display list of files in the input folder
 $optionDisplayInputFiles = $true
 
+# - Confirm file move and rename for each file after processing
+$optionConfirmFileMoveAndRename = $false
+
 # - Default conversion software to use, ffmpeg or sox or audacity
 $optionDefaultConversionSoftware = "ffmpeg"
 
@@ -81,15 +91,26 @@ $optionDefaultConversionSoftware = "ffmpeg"
 $optionDefaultPostProcessingSoftware = "audacity"
 
 # - Use an intermediary file format for post-processing with audacity
-# - Make this a null string if you don't want to use an intermediary file format
+# - Make this a null string if you don't want to use an intermediary file format (not yet tested)
 $optionIntermediaryFileFormat = "FLAC"
 
 # - Copy valid WAV files to the target folder
 # - If this is set not true then all WAV files will be reprocessed and not validated & copied
 $optionCopyValidWAVs = $false
 
-# - Audacity macro folder
-$optionAudacityMacroFolder = "%AppData%\Roaming\audacity\Macros"
+# - Audacity macro outputfolder
+# - This is the folder that will contain the Audacity macro output files (The WAV files)
+# - This is a relative path, and it will be combined with the user's profile path
+$optionAudacityMacroOutputFolder = "OneDrive\Documents\Audacity\macro-output"
+
+# - Audactity macro location
+# - This is the location of the Audacity macro that will be used to process the audio files
+# - We used to merge the environment path in the main script, but it simplified the code to just include it here
+$optionAudacityMacroLocation = "$env:APPDATA\audacity\Macros\AutoWAVMaker.txt"
+
+########################################################################################
+# End of configuration section
+########################################################################################    
 
 # Function to sanitize metadata
 function Get-SanitizedMetadata {
@@ -99,6 +120,7 @@ function Get-SanitizedMetadata {
     
     # Extract basic metadata using ffprobe
     $metadata = ffprobe -v quiet -print_format json -show_format -show_streams "$InputFile" | ConvertFrom-Json
+    Write-Debug "Extracted metadata: $metadata"
     
     # Create sanitized metadata with only essential fields
     $sanitized = @{
@@ -150,7 +172,7 @@ function Get-SanitizedMetadata {
     }
     
     # Display metadata in debug mode
-    Write-Debug "`nExtracted metadata for $([System.IO.Path]::GetFileName($InputFile)):"
+    Write-Debug "`nSanitized metadata for $([System.IO.Path]::GetFileName($InputFile)):"
     Write-Debug "----------------------------------------"
     $sanitized.GetEnumerator() | ForEach-Object {
         Write-Debug "$($_.Key): $($_.Value)"
@@ -302,7 +324,156 @@ function Test-DuplicateFile {
     }
 }
 
-function queryPrefixRange {
+function Write-AudioFileProperties {
+    param (
+        [Parameter(Mandatory=$true)]
+        [string]$FilePath
+    )
+    
+    $fileInfo = ffprobe -v quiet -print_format json -show_format -show_streams "$FilePath" | ConvertFrom-Json
+    Write-Debug " File size: $([math]::Round($fileInfo.format.size / 1MB, 2)) MB"
+    Write-Debug " Duration: $([math]::Round($fileInfo.format.duration, 2)) seconds" 
+    Write-Debug " Bit rate: $([math]::Round($fileInfo.format.bit_rate / 1000, 2)) kbps"
+    Write-Debug " Sample rate: $($fileInfo.streams[0].sample_rate) Hz"
+    Write-Debug " Channels: $($fileInfo.streams[0].channels)"
+    Write-Debug " Bits per sample: $($fileInfo.streams[0].bits_per_sample)"
+    Write-Debug " Codec: $($fileInfo.streams[0].codec_name)"
+}
+
+########################################################################################
+# Main Script starts here
+########################################################################################
+
+Write-Host "`nWelcome to the WAV Maker script!" -ForegroundColor Green
+Write-Host "This script processes audio files to meet WAV Trigger requirements."
+Write-Host "  (16-bit PCM, 44.1 kHz, stereo)"
+
+# Enable debug output with -Debug switch when running script
+Write-Debug "Debug mode is enabled."
+
+# Check if supported conversion software is installed and accessible
+$ffmpegLocation = Get-Command ffmpeg -ErrorAction SilentlyContinue
+$soxLocation = Get-Command sox -ErrorAction SilentlyContinue        # sox only supports WAV file inputs
+
+if (-not $ffmpegLocation -and -not $soxLocation) {
+    Write-Host "Neither ffmpeg nor sox is installed or not accessible. Please install one of them and try again." -ForegroundColor Red
+    exit
+} elseif (-not $ffmpegLocation -and $soxLocation) {
+    Write-Debug "Using sox for audio conversion as ffmpeg is not installed."
+    Write-Host "Using sox for audio conversion. Only WAV files are supported as input."
+    $optionDefaultConversionSoftware = "sox"
+} elseif ($ffmpegLocation -and -not $soxLocation) {
+    Write-Debug "Using ffmpeg for audio conversion as sox is not installed."
+    $optionDefaultConversionSoftware = "ffmpeg"
+} else {
+    Write-Debug "Both ffmpeg and sox are installed. Using the default conversion software: $optionDefaultConversionSoftware"
+}
+
+# Check if audacity is installed in one of these common locations
+$audacityLocations = @(
+    "C:\Program Files\Audacity\audacity.exe",
+    "C:\Program Files (x86)\Audacity\audacity.exe",
+    "C:\tools\audacity\audacity.exe",  # Chocolatey default location
+    "C:\ProgramData\chocolatey\bin\audacity.exe"  # Chocolatey alternative location
+)
+
+$audacityLocation = $null
+foreach ($location in $audacityLocations) {
+    if (Test-Path $location) {
+        $audacityLocation = $location
+        Write-Debug "Found Audacity at: $location"
+        break
+    }
+}
+
+if (-not $audacityLocation) {
+    Write-Host "Audacity is not installed in any of the common locations. Please install it and try again." -ForegroundColor Red
+    Write-Host "Common installation locations checked:"
+    foreach ($location in $audacityLocations) {
+        Write-Host "  $location"
+    }
+    exit
+}
+
+# Check that the AutoWAVMaker macro exists
+$audacityMacroLocation = $optionAudacityMacroLocation # This is redundant now that we're merging the environment path in the configuration section
+if (-not (Test-Path $audacityMacroLocation)) {
+    Write-Host "AutoWAVMaker macro does not exist at $audacityMacroLocation"
+    Write-Host "Would you like me to attempt to create it for you?"
+    $confirmation = Read-Host "Enter y or n"
+    if ($confirmation -eq 'y') {
+        New-Item -ItemType File -Path $audacityMacroLocation
+        # Write the AutoWAVMaker macro content
+        @"
+SelectAll:
+Normalize:ApplyVolume="1" PeakLevel="-1" RemoveDcOffset="1" StereoIndependent="0"
+ExportWav:
+"@ | Out-File -FilePath $audacityMacroLocation -Encoding UTF8
+
+        Write-Host "AutoWAVMaker macro created at $audacityMacroLocation" -ForegroundColor Green
+    } else {
+        Write-Debug "AutoWAVMaker macro does not exist at $audacityMacroLocation"
+    }
+}
+
+# Create output folder if it doesn't exist
+if (-not (Test-Path $outputFolder)) {
+    New-Item -ItemType Directory -Path $outputFolder
+    Write-Host "Output folder created: $outputFolder"
+} else {
+    Write-Debug "Using output folder: $outputFolder"
+}
+
+# Ensure that the target folder exists
+$validTargetFolder = $false
+while (-not $validTargetFolder) {
+    if (-not (Test-Path $targetFolder)) {
+        Write-Host "Target folder does not exist at $targetFolder" -ForegroundColor Yellow
+        Write-Host "Would you like to create this folder or specify a different folder?"
+        $confirmation = Read-Host "Enter y to create the folder or n to specify a different folder"
+        if ($confirmation -eq 'y') {
+            New-Item -ItemType Directory -Path $targetFolder
+            Write-Host "Target folder created: $targetFolder"
+            $validTargetFolder = $true
+        } else {
+            Write-Host "Please specify a different target folder."
+            $targetFolder = Read-Host "Enter the target folder"
+            if (Test-Path $targetFolder) {
+                $validTargetFolder = $true
+            }
+        }
+    } else {
+        Write-Debug "Using target folder: $targetFolder"
+        $validTargetFolder = $true
+    }
+}
+
+# Display list of files in the input folder
+if ($optionDisplayInputFiles) {
+    # Get all audio files in the input folder
+    $audioFiles = Get-ChildItem -Path $inputFolder -Include *.mp3, *.m4a, *.wav -Recurse
+    
+    # Check if there are any files
+    if ($audioFiles.Count -eq 0) {
+        Write-Host "No audio files found in the input folder." -ForegroundColor Yellow
+    } else {
+        # Display the list of files
+        Write-Host "`nAudio files in the input folder:" -ForegroundColor Green
+        foreach ($file in $audioFiles) {
+            Write-Host "  $($file.Name)" -ForegroundColor Blue
+        }
+        # Ask for confirmation
+        Write-Host "`nAre these the files you wish to process? (y/n)"
+        $confirmation = Read-Host "Enter y or n"
+        if ($confirmation -eq 'n') {
+            Write-Host "Okay, I'll exit the script. Please run it again when you're ready to process the input folder."
+            exit
+        }
+    }
+}
+
+# Ask the user to define the type of sound and collection, and therefore the prefix range
+while ($prefixRange.Count -eq 0) {
     Write-Host "`nThe target files will be named with a 3-digit prefix corresponding to the sound type and collection type."
     Write-Host "`nSelect the sound type:"
     Write-Host "1. Kickout hole sounds"
@@ -373,145 +544,6 @@ function queryPrefixRange {
         }
     }
     Write-Debug "Prefix range: $prefixRange"
-    return $prefixRange
-}
-
-########################################################################################
-# Main Script starts here
-########################################################################################
-
-# Welcome message
-Write-Host "`nWelcome to the WAV Maker script!" -ForegroundColor Green
-Write-Host "This script processes audio files to meet WAV Trigger requirements."
-Write-Host "  (16-bit PCM, 44.1 kHz, stereo)"
-
-# To enable debug mode, set $DebugPreference = "Continue" from the PowerShell command line
-# to disable debug mode, set $DebugPreference = "SilentlyContinue" from the PowerShell command line
-Write-Debug "Debug mode is enabled."
-
-# Check if supported conversion software is installed and accessible
-$ffmpegLocation = Get-Command ffmpeg -ErrorAction SilentlyContinue
-$soxLocation = Get-Command sox -ErrorAction SilentlyContinue        # sox only supports WAV file inputs
-
-if (-not $ffmpegLocation -and -not $soxLocation) {
-    Write-Host "Neither ffmpeg nor sox is installed or not accessible. Please install one of them and try again." -ForegroundColor Red
-    exit
-} elseif (-not $ffmpegLocation -and $soxLocation) {
-    Write-Debug "Using sox for audio conversion as ffmpeg is not installed."
-    $optionDefaultConversionSoftware = "sox"
-} elseif ($ffmpegLocation -and -not $soxLocation) {
-    Write-Debug "Using ffmpeg for audio conversion as sox is not installed."
-    $optionDefaultConversionSoftware = "ffmpeg"
-} else {
-    Write-Debug "Both ffmpeg and sox are installed. Using the default conversion software: $optionDefaultConversionSoftware"
-}
-
-# Check if audacity is installed in common locations
-$audacityLocations = @(
-    "C:\Program Files\Audacity\audacity.exe",
-    "C:\Program Files (x86)\Audacity\audacity.exe",
-    "C:\tools\audacity\audacity.exe",  # Chocolatey default location
-    "C:\ProgramData\chocolatey\bin\audacity.exe"  # Chocolatey alternative location
-)
-
-$audacityLocation = $null
-foreach ($location in $audacityLocations) {
-    if (Test-Path $location) {
-        $audacityLocation = $location
-        Write-Debug "Found Audacity at: $location"
-        break
-    }
-}
-
-if (-not $audacityLocation) {
-    Write-Host "Audacity is not installed in any of the common locations. Please install it and try again." -ForegroundColor Red
-    Write-Host "Common installation locations checked:"
-    foreach ($location in $audacityLocations) {
-        Write-Host "  $location"
-    }
-    exit
-}
-
-# Check that the AutoWAVMaker macro exists
-$audacityMacroLocation = Join-Path $env:APPDATA "audacity\Macros\AutoWAVMaker.txt"
-if (-not (Test-Path $audacityMacroLocation)) {
-    Write-Host "AutoWAVMaker macro does not exist at $audacityMacroLocation"
-    Write-Host "Would you like me to attempt to create it for you?"
-    $confirmation = Read-Host "Enter y or n"
-    if ($confirmation -eq 'y') {
-        New-Item -ItemType File -Path $audacityMacroLocation
-        # Write the AutoWAVMaker macro content
-        @"
-SelectAll:
-Normalize:ApplyVolume="1" PeakLevel="-1" RemoveDcOffset="1" StereoIndependent="0"
-ExportWav:
-"@ | Out-File -FilePath $audacityMacroLocation -Encoding UTF8
-
-        Write-Host "AutoWAVMaker macro created at $audacityMacroLocation" -ForegroundColor Green
-    } else {
-        Write-Debug "AutoWAVMaker macro does not exist at $audacityMacroLocation"
-    }
-}
-
-# Create output folder if it doesn't exist
-if (-not (Test-Path $outputFolder)) {
-    New-Item -ItemType Directory -Path $outputFolder
-    Write-Host "Output folder created: $outputFolder"
-} else {
-    Write-Debug "Using output folder: $outputFolder"
-}
-
-# Ensure that the target folder exists
-$validTargetFolder = $false
-while (-not $validTargetFolder) {
-    if (-not (Test-Path $targetFolder)) {
-        Write-Host "Target folder does not exist at $targetFolder" -ForegroundColor Yellow
-        Write-Host "Would you like to create this folder or specify a different folder?"
-        $confirmation = Read-Host "Enter y to create the folder or n to specify a different folder"
-        if ($confirmation -eq 'y') {
-            New-Item -ItemType Directory -Path $targetFolder
-            Write-Host "Target folder created: $targetFolder"
-            $validTargetFolder = $true
-        } else {
-            Write-Host "Please specify a different target folder."
-            $targetFolder = Read-Host "Enter the target folder"
-            if (Test-Path $targetFolder) {
-                $validTargetFolder = $true
-            }
-        }
-    } else {
-        Write-Debug "Using target folder: $targetFolder"
-        $validTargetFolder = $true
-    }
-}
-
-# Display list of files in the input folder
-if ($optionDisplayInputFiles) {
-    # Get all audio files in the input folder
-    $audioFiles = Get-ChildItem -Path $inputFolder -Include *.mp3, *.m4a, *.wav -Recurse
-    
-    # Check if there are any files
-    if ($audioFiles.Count -eq 0) {
-        Write-Host "No audio files found in the input folder." -ForegroundColor Yellow
-    } else {
-        # Display the list of files
-        Write-Host "`nAudio files in the input folder:" -ForegroundColor Green
-        foreach ($file in $audioFiles) {
-            Write-Host "  $($file.Name)" -ForegroundColor Blue
-        }
-        # Ask for confirmation
-        Write-Host "`nAre these the files you wish to process? (y/n)"
-        $confirmation = Read-Host "Enter y or n"
-        if ($confirmation -eq 'n') {
-            Write-Host "Exiting."
-            exit
-        }
-    }
-}
-
-# Query the user for the prefix range
-while ($prefixRange.Count -eq 0) {
-    $prefixRange = queryPrefixRange
 }
 
 # Clean up the input folder before the conversion process so that we're entering with clean filenames
@@ -529,14 +561,12 @@ if ($optionRemoveLeadingTrackNumbers) {
         $confirmation = 'y'
         if ($confirmation -eq 'y') {
             Rename-Item -Path $_.FullName -NewName $newName
-            # Update the inputFile variable to the new name
-            $inputFile = Join-Path $inputFolder $newName
+            } else {
+                Write-Host "Skipping rename for: $($_.Name)"
+            }
         } else {
-            Write-Host "Skipping rename for: $($_.Name)"
+            Write-Debug "No leading disc/track numbers found in: $($_.Name)"
         }
-    } else {
-        Write-Debug "No leading disc/track numbers found in: $($_.Name)"
-    }
     }
 } # End of removing leading disc/track numbers
 
@@ -550,7 +580,7 @@ Get-ChildItem -Path $inputFolder -Include *.mp3, *.m4a, *.wav -Recurse | ForEach
     $inputFile = $_.FullName
     Write-Debug "Input file: $inputFile"
 
-    # Create the output file target path with appropriate extension
+    # Create the output file target path with appropriate extension. This is the file that will be created.
     $outputFile = Join-Path $outputFolder ($_.BaseName + ".$($optionIntermediaryFileFormat.ToLower())")
     Write-Debug "Output file target: $outputFile"
 
@@ -558,10 +588,8 @@ Get-ChildItem -Path $inputFolder -Include *.mp3, *.m4a, *.wav -Recurse | ForEach
     if (-not (Test-Path $outputFile)) {
         Write-Host "Processing $($_.Name)..."
         
-        # If it's already a WAV file, validate it first
+        # If it's already a WAV file, optionally validate it and copy it to the output folder instead of converting
         # My validation tests are not fully reliable, so we'll not skip processing if it's already a WAV file
-        # We'll let the user decide if they want to skip validation
-
         if ($_.Extension -eq '.wav' -and $optionCopyValidWAVs -eq $true) {
             Write-Debug "File is already a WAV file: $($_.Name)"
             if ((Test-WavFile -FilePath $inputFile) -and (Test-WavStructure -FilePath $inputFile -FileExtension $_.Extension)) {
@@ -577,59 +605,83 @@ Get-ChildItem -Path $inputFolder -Include *.mp3, *.m4a, *.wav -Recurse | ForEach
             }
         }
         
-        # Get sanitized metadata
-        $metadataString = Get-SanitizedMetadata -InputFile $inputFile
-        Write-Debug "Sanitized metadata: $metadataString"
-        
-        # Some existing source material may have extraineous metadata that we don't want to include
-        # The -map_metadata -1 flag strips all metadata before we add our sanitized version
+        Write-Debug "Input file properties:"
+        Write-AudioFileProperties -FilePath $inputFile
 
-        # The optional -hide_banner command suppresses the ffmpeg banner and is controlled by the $optionDisplayFfmpegConfigHeader flag
-        if ($optionDisplayFfmpegConfigHeader) {
-            $ffmpegConfigHeader = ""
+        # Get sanitized metadata only if we're going to use it later
+        if ($optionSanitizeMetadata) {
+            $metadataString = Get-SanitizedMetadata -InputFile $inputFile
+            Write-Debug "Sanitized metadata: $metadataString"
         } else {
-            $ffmpegConfigHeader = "-hide_banner"
+            Write-Debug "Sanitized metadata not requested"
         }
 
+        # FFMPEG supports a wide range of audio formats, so we'll use it as the default
         if ($optionDefaultConversionSoftware -eq "ffmpeg") {
-            # FFMPEG supports a wide range of audio formats, so we'll use it as the default
-            if ($optionIntermediaryFileFormat -eq "FLAC") {
-                $conversionCommand = "ffmpeg -hide_banner -i `"$inputFile`" $ffmpegConfigHeader -ac 2 -ar 44100 -acodec flac -map_metadata -1 $metadataString `"$outputFile`""
+
+            # The optional -hide_banner command suppresses the ffmpeg banner, though it could be useful for debugging
+            if ($optionDisplayFfmpegConfigHeader) {
+                $ffmpegConfigHeader = ""
             } else {
-                $conversionCommand = "ffmpeg -hide_banner -i `"$inputFile`" $ffmpegConfigHeader -ac 2 -ar 44100 -acodec pcm_s16le -map_metadata -1 $metadataString `"$outputFile`""
+                $ffmpegConfigHeader = "-hide_banner"
             }
+
+            # The optional -map_metadata -1 flag strips all metadata and $metdataString replaces it with our sanitized version
+            if ($optionSanitizeMetadata) {
+                $metadataOptions = "-map_metadata -1 $metadataString"
+            } else {
+                $metadataOptions = ""
+            }
+
+            # I added an intermediary file format because I thought Audacity was silently failing to convert the file to WAV due to a filename conflict
+            # I was wrong, but I'm keeping the intermediary file format option for now
+            # In the future, I can proably just copy Audacity's output file to the output folder and overwrite the working file
+            if ($optionIntermediaryFileFormat -eq "FLAC") {
+                $targetCodec = "flac"
+            } else {
+                $targetCodec = "pcm_s16le"
+            }
+
+            # Now we build the conversion command
+            $conversionCommand = "ffmpeg -i `"$inputFile`" $ffmpegConfigHeader -ac 2 -ar 44100 -acodec $targetCodec $metadataOptions `"$outputFile`""
+
         } elseif ($optionDefaultConversionSoftware -eq "sox") {
             # SOX typically only supports WAV file inputs, so we'll use it as a fallback
             $conversionCommand = "sox -v 0 `"$inputFile`" -c 2 -r 44100 -b 16 -t wav -e signed-integer `"$outputFile`""
+
         } elseif ($optionDefaultConversionSoftware -eq "audacity") {
-            # Audacity supports a wide range of audio formats, so we'll use it as a fallback
             # Audacity does not support command line options, so we'll need to build a macro and run it
-            $conversionCommand = "audacity -hide_banner -i `"$inputFile`" -o `"$outputFile`""
+            # THIS IS NOT WORKING YET.
+            $conversionCommand = 'Start-Process "C:\Path\To\nircmd.exe" -ArgumentList "sendkeypress ctrl+shift+m"'
+
         } else {
-            Write-Host "Invalid conversion software selection. Exiting." -ForegroundColor Red
+            Write-Host "Invalid conversion software selection. $optionDefaultConversionSoftware is not supported. Exiting." -ForegroundColor Red
             exit
         }
         
+        # This is where the conversion command is executed. 
+        # It's built to support multiple conversion software options, provided they all support command line options
         Write-Debug "Conversion command: $conversionCommand"
         Invoke-Expression $conversionCommand
         
-        if ($?) {
+        if ($?) {   # The $? variable is a boolean that returns true if the last command was successful
             Write-Debug "Conversion command completed successfully"
+
             # Confirm that the file was created
             if (Test-Path $outputFile) {
                 Write-Debug "Successfully created audio file: $outputFile" 
-                Write-Debug "`nAudio file properties after ffmpeg conversion:"
-                $preProcessingInfo = ffprobe -v quiet -print_format json -show_format -show_streams "$outputFile" | ConvertFrom-Json
-                Write-Debug " File size: $([math]::Round($preProcessingInfo.format.size / 1MB, 2)) MB"
-                Write-Debug " Duration: $([math]::Round($preProcessingInfo.format.duration, 2)) seconds"
-                Write-Debug " Bit rate: $([math]::Round($preProcessingInfo.format.bit_rate / 1000, 2)) kbps"
-                Write-Debug " Sample rate: $($preProcessingInfo.streams[0].sample_rate) Hz"
-                Write-Debug " Channels: $($preProcessingInfo.streams[0].channels)"
-                Write-Debug " Bits per sample: $($preProcessingInfo.streams[0].bits_per_sample)"
-                Write-Debug " Codec: $($preProcessingInfo.streams[0].codec_name)"
+
+                Write-Debug "`nAudio file properties after initial conversion:"
+                Write-AudioFileProperties -FilePath $outputFile
                 
-                Write-Host "Post-processing to improve audio file quality..."
+                # Write-Host "Post-processing to improve audio file compatibility."
+                # For some yet-to-be-determined reason, the file created by ffmpeg is not playable in the WAV Trigger
+                # I have tried to work around this issue by doing some quick post-processing.
+                # This is not an ideal solution, but it works for now
+             
                 if ($optionDefaultPostProcessingSoftware -eq "sox") {
+                    # This did not work to resolve the issue of the file not being playable in WAV Trigger
+
                     # Create a temporary file for post-processing
                     $tempFile = Join-Path $outputFolder ("temp_" + $_.BaseName + ".$($optionIntermediaryFileFormat.ToLower())")
                     $postProcessingCommand = "sox -v 0 `"$outputFile`" -c 2 -r 44100 -b 16 -t wav -e signed-integer `"$tempFile`""
@@ -643,10 +695,19 @@ Get-ChildItem -Path $inputFolder -Include *.mp3, *.m4a, *.wav -Recurse | ForEach
                     }
 
                 } elseif ($optionDefaultPostProcessingSoftware -eq "audacity") {
-                    Write-Host "Opening file in Audacity. Please execute the AutoWAVMakermacro manually and close Audacity when done."
+                    # This is the only post-processing option that is known to work
+                    # If Audacity had more command line options, we could use that from the start
+                    # Doing the main conversion with another program provides control over the output file properties
+                    # Exporting the file from Audacity as a WAV file provides a file that is playable in WAV Trigger
+                    
+                    Write-Host "`nOpening file in Audacity. Please execute the AutoWAVMaker macro manually and close Audacity when done." -ForegroundColor Yellow
+                    Write-Host "  The keystrokes to execute the macro are:" -ForegroundColor Yellow
+                    Write-Host "    alt-o (Tools), then a (Apply Macro), then down-arrow once (to select the AutoWAVMaker macro), then enter" -ForegroundColor Yellow
+                    Write-Host "  Once the macro has been executed, close Audacity" -ForegroundColor Yellow
+                    Write-Host "    Keystrokes: alt-F4, then 'n' for no save)" -ForegroundColor Yellow
                     Start-Process -FilePath $audacityLocation -ArgumentList "`"$(Resolve-Path $inputFile)`"" -Wait
                     Write-Debug "Audacity process completed"
-                    $audacityOutputFile = Join-Path $env:USERPROFILE "OneDrive\Documents\Audacity\macro-output" "$($_.BaseName).wav"
+                    $audacityOutputFile = Join-Path $env:USERPROFILE $optionAudacityMacroOutputFolder "$($_.BaseName).wav"
                     Write-Debug "Audacity output file best guess: $audacityOutputFile"
                     if (Test-Path $audacityOutputFile) {
                         Write-Debug "Audacity output file exists: $audacityOutputFile"
@@ -660,6 +721,7 @@ Get-ChildItem -Path $inputFolder -Include *.mp3, *.m4a, *.wav -Recurse | ForEach
                     }
                 }
 
+                # This is a sanity check to ensure that I've kept track of the path to the output file
                 if (Test-Path $outputFile) {
                     Write-Debug "Output file still exists: $outputFile"
                 } else {
@@ -667,16 +729,11 @@ Get-ChildItem -Path $inputFolder -Include *.mp3, *.m4a, *.wav -Recurse | ForEach
                 }
 
                 Write-Debug "`nPost-processing audio file properties:"
-                $postProcessingInfo = ffprobe -v quiet -print_format json -show_format -show_streams "$outputFile" | ConvertFrom-Json
-                Write-Debug "File size: $([math]::Round($postProcessingInfo.format.size / 1MB, 2)) MB"
-                Write-Debug "Duration: $([math]::Round($postProcessingInfo.format.duration, 2)) seconds"
-                Write-Debug "Bit rate: $([math]::Round($postProcessingInfo.format.bit_rate / 1000, 2)) kbps"
-                Write-Debug "Sample rate: $($postProcessingInfo.streams[0].sample_rate) Hz"
-                Write-Debug "Channels: $($postProcessingInfo.streams[0].channels)"
-                Write-Debug "Bits per sample: $($postProcessingInfo.streams[0].bits_per_sample)"
-                Write-Debug "Codec: $($postProcessingInfo.streams[0].codec_name)"
+                Write-AudioFileProperties -FilePath $outputFile
                 
                 # Validate both the audio properties and file structure
+                # Validation was added while attempting to work around the issue of the file not being playable in WAV Trigger
+                # The validation tests are not yet able to discern between a file that is playable and one that is not playable
                 if ((Test-WavFile -FilePath $outputFile) -and (Test-WavStructure -FilePath $outputFile -FileExtension $_.Extension)) {
                     Write-Host "Successfully converted and validated $($_.Name)" -ForegroundColor Green
                     $convertedCount++
@@ -699,6 +756,8 @@ Get-ChildItem -Path $inputFolder -Include *.mp3, *.m4a, *.wav -Recurse | ForEach
 # Check if any files were converted
 if ($convertedCount -eq 0) {
     Write-Host "`nNo files were converted." -ForegroundColor Yellow
+} elseif ($convertedCount -eq 1) {
+    Write-Host "`n$convertedCount file was converted to WAV format." -ForegroundColor Green
 } else {
     Write-Host "`n$convertedCount files were converted to WAV format." -ForegroundColor Green
 }
@@ -714,16 +773,19 @@ if ($wavFiles.Count -eq 0) {
     foreach ($file in $wavFiles) {
         Write-Host " ", $file.Name -ForegroundColor Blue
     }
-} # End of listing WAV files in the output folder
+} 
 
 Write-Host "`nMoving and renaming files to the target folder..." -ForegroundColor Green
 
-# Move WAV files to the target folder with 3-digit prefix
+# Move WAV files to the target folder using a 3-digit prefix within the correct range of prefixes
 # We have a defined prefix range, so we need to find the next available prefix in the target folder for each file
+
 # We will use the prefix index to find the next available prefix in the target folder
-$prefixIndex = 0    # Start at the first prefix in the range
+$prefixIndex = 0    
+# Starting at the first prefix in the range, we will step through each prefix looking for available space
+# In this manner, we will fill in any gaps in the file numbering as files are converted and moved
 Get-ChildItem -Path $outputFolder -Filter *.wav | ForEach-Object {
-    # Each time we move to the next file, the index picks up where it left off
+    # Each time we move to the next file, the prefix index picks up where it left off
     $wavFile = $_.FullName
     $prefix = $prefixRange[$prefixIndex]
     $targetName = "{0:D3}_{1}" -f $prefix, $_.Name
@@ -731,24 +793,26 @@ Get-ChildItem -Path $outputFolder -Filter *.wav | ForEach-Object {
     $targetPath = Join-Path $targetFolder $targetName
 
     # Check for duplicate files by name (ignoring prefix)
-    $duplicateCheck = Test-DuplicateFile -TargetFolder $targetFolder -FileName $targetName
-    if ($duplicateCheck.HasConflict) {
-        Write-Host "Warning: A file with the same name already exists in the target folder:" -ForegroundColor Yellow
-        Write-Host "Existing file: $($duplicateCheck.ConflictingName)"
-        Write-Host "New file: $($_.Name)"
-        $confirmation = Read-Host "Do you want to delete the existing file so it can be replaced with the new one? (y/n)"
-        if ($confirmation -eq 'y') {
-            Remove-Item -Path $duplicateCheck.ConflictingFile
-            Write-Host "Deleted existing file: $($duplicateCheck.ConflictingName)"
+    if ($optionCheckForDuplicateFiles) {
+        $duplicateCheck = Test-DuplicateFile -TargetFolder $targetFolder -FileName $targetName
+        if ($duplicateCheck.HasConflict) {
+            Write-Host "Warning: A file with the same name already exists in the target folder:" -ForegroundColor Yellow
+            Write-Host "  Existing file: $($duplicateCheck.ConflictingName)"
+            Write-Host "  New file: $($_.Name)"
+            $confirmation = Read-Host "Do you want to delete the existing file so it can be replaced with the new one? (y/n)"
+            if ($confirmation -eq 'y') {
+                Remove-Item -Path $duplicateCheck.ConflictingFile
+                Write-Host "Deleted existing file: $($duplicateCheck.ConflictingName)"
+            } else {
+                Write-Host "A file with this title already exists in the target folder. Since it was not deleted,"
+                Write-Host "a second instance of this title will be created with the next available prefix."
+            }
         } else {
-            Write-Host "A conflict exists for this file: $targetName"
-            continue
+            Write-Debug "No duplicate files found for $($_.Name)"
         }
-    } else {
-        Write-Debug "No duplicate files found for $($_.Name)"
     }
 
-    # Check if a file with the target prefix already exists
+    # Look for the next available prefix in the target folder
     while (Test-Path (Join-Path $targetFolder "$($prefix.ToString('D3'))*.wav")) {
         $prefixIndex++
         if ($prefixIndex -ge $prefixRange.Count) {
@@ -762,18 +826,23 @@ Get-ChildItem -Path $outputFolder -Filter *.wav | ForEach-Object {
         $targetPath = Join-Path $targetFolder $targetName
     }
 
+    # We have our target name, so we can move and rename the file
     Write-Host "Working Name: $($_.Name)"
     Write-Host "Target Name: $targetName"
-    $confirmation = Read-Host "Do you want to move and rename this file? (y/n)"
-    if ($confirmation -eq 'y') {
+    if ($optionConfirmFileMoveAndRename) {
+        $confirmation = Read-Host "Do you want to move and rename this file? (y/n)"
+        if ($confirmation -eq 'y') {
+            Move-Item -Path $wavFile -Destination $targetPath
+            $prefixIndex++
+        } else {
+                Write-Host "Skipping file: $($_.Name)"
+            }
+    } else {
         Move-Item -Path $wavFile -Destination $targetPath
         $prefixIndex++
-    } else {
-        Write-Host "Skipping file: $($_.Name)"
     }
 } # End of moving and renaming files
 
 Write-Host "`nAll files have been processed as directed." -ForegroundColor Green
 Write-Host "Please check the target folder for the newly renamed and organized files."
 Write-Host "Thank you for using the WAV Maker script!"
-
