@@ -2,8 +2,6 @@
 
 A PowerShell script for converting and organizing audio files to meet WAV Trigger requirements.
 
-## Workflow
-
 The script follows a two-step process to prepare audio files for use with the WAV Trigger board:
 
 1. Initial Processing with FFmpeg

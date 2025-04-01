@@ -40,17 +40,3 @@
 
 5. Rename file with proper numeric prefix
    - Example: `007_Cowbell.wav` for Trigger 7
-
-### Batch Processing
-For multiple MP3s, use Audacity's Chains/Macros feature or ffmpeg:
-```bash
-ffmpeg -i input.mp3 -ac 2 -ar 44100 -sample_fmt s16 output.wav
-```
-- `-ac 2`: stereo
-- `-ar 44100`: sample rate
-- `-sample_fmt s16`: 16-bit PCM
-
-## Testing
-Before deploying:
-1. Test converted WAV files on your computer
-2. Verify files are stereo and 44.1kHz using file properties or audio analysis tools

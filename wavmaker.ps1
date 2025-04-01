@@ -1,7 +1,7 @@
 # wavmaker.ps1
 # author: Joshua Mazgelis
 # date: 2025-04-01
-# version: 2.0
+# version: 1.15
 
 [CmdletBinding()]
 param()
