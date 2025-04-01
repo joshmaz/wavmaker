@@ -1,7 +1,7 @@
 # wavmaker.ps1
 # author: Joshua Mazgelis
-# date: 2025-03-28
-# version: 1.10
+# date: 2025-04-01
+# version: 2.0
 
 [CmdletBinding()]
 param()
@@ -13,11 +13,9 @@ param()
 # - Uncompressed PCM encoding
 #
 # Supported input formats:
-# - MP3/M4A: Converted to WAV with sanitized metadata
-# - WAV: Validated and copied if meeting requirements, converted if not
-#   Note: Valid WAV files are copied without metadata modification
+# - MP3/M4A/WAV files
 #
-# The script handles file renaming and organization according to WAV Trigger specifications:
+# The script handles file renaming and organization according to project specifications:
 # - Removes leading track numbers from source files
 # - Assigns 3-digit prefixes for primary (101-199) or alternate (201-299) collections
 # - Prevents duplicate files with different numerical prefixes
@@ -63,7 +61,7 @@ $musicAlternateRange = 201..299
 # A proper command line interface would be better, but this is a quick and dirty solution
 # Behavior Option Flags:
 
-# - Remove leading track numbers from file names
+# - Remove leading track numbers from file names without asking the user
 $optionRemoveLeadingTrackNumbers = $true
 
 # - Sanitize metadata
@@ -476,16 +474,18 @@ if ($optionDisplayInputFiles) {
 while ($prefixRange.Count -eq 0) {
     Write-Host "`nThe target files will be named with a 3-digit prefix corresponding to the sound type and collection type."
     Write-Host "`nSelect the sound type:"
-    Write-Host "1. Kickout hole sounds"
-    Write-Host "2. Rollover lane sounds"
-    Write-Host "3. Tilt relay sounds"
-    Write-Host "4. Music tracks"
-    $soundType = Read-Host "Enter the number (1-4)"
+    Write-Host " 1. Kickout hole sounds"
+    Write-Host " 2. Rollover lane sounds"
+    Write-Host " 3. Tilt relay sounds"
+    Write-Host " 4. Music tracks"
+    $soundType = Read-Host "Enter the number for the sound type we're processing (1-4)"
 
     Write-Host "`nSelect the collection type:"
-    Write-Host "p. Primary collection"
-    Write-Host "a. Alternate collection"
-    $collectionType = Read-Host "Enter p or a"
+    Write-Host " p. Primary collection"
+    Write-Host " a. Alternate collection"
+    $collectionType = Read-Host "Enter p or a to specify if these should be added to the primary or alternate collection"
+
+    Write-Debug "User entered sound type: $soundType and collection type: $collectionType"
 
     # Set the appropriate range based on selections
     switch ($soundType) {

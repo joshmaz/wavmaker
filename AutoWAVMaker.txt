@@ -1,3 +1,0 @@
-SelectAll:
-Normalize:ApplyVolume="1" PeakLevel="-1" RemoveDcOffset="1" StereoIndependent="0"
-ExportWav:
