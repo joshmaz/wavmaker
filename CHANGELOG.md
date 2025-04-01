@@ -5,6 +5,38 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.15] - 2025-04-01
+
+### Added
+- Two-stage audio processing workflow:
+  - Initial FFmpeg processing for format standardization
+  - Automated Audacity processing for normalization and compatibility
+- Audacity macro creation for consistent audio processing and ease of operation
+- Support for multiple processing paths through configuration variables:
+  - Direct FFmpeg processing
+  - Sox audio processing
+  - Direct WAV metadata manipulation
+- Configurable file organization strategies
+- Interactive prefix range selection based on sound type and collection
+- Improved target folder handling with validation and creation prompts
+- Debug logging for better troubleshooting
+- Input file preview with confirmation before processing
+
+### Changed
+- Complete script rewrite with improved organization and modularity
+- Enhanced error handling and user feedback
+- Updated documentation to reflect new workflow and features
+- Improved file prefix assignment with dedicated ranges for different sound types:
+  - Kickout hole sounds (020-029 primary, 030-039 alternate)
+  - Rollover lane sounds (040-049 primary, 050-059 alternate) 
+  - Tilt relay sounds (060-069 primary, 070-079 alternate)
+  - Music tracks (100-199 primary, 200-299 alternate)
+
+### Fixed
+- Inconsistent audio levels between processed files
+- Metadata handling issues with special characters
+- File organization conflicts with duplicate names
+
 ## [1.10] - 2024-03-29
 ### Changed
 - Updated file naming convention to use underscores instead of hyphens (e.g., `101_SongName.wav`)

@@ -2,23 +2,59 @@
 
 A PowerShell script for converting and organizing audio files to meet WAV Trigger requirements.
 
+The script follows a two-step process to prepare audio files for use with the WAV Trigger board:
+
+1. Initial Processing with FFmpeg
+   - Source files (MP3, M4A, or WAV) are processed using FFmpeg
+   - Files are standardized to meet basic WAV Trigger requirements:
+     - 16-bit PCM format
+     - 44.1 kHz sample rate
+     - Stereo output
+     - Uncompressed PCM encoding
+   - This creates an intermediate WAV file with consistent properties
+
+2. Audacity Processing and Normalization
+   - The standardized WAV file is then processed through Audacity
+   - An automated macro applies:
+     - Normalization to ensure consistent volume levels
+     - Any required audio cleanup
+     - Final format validation
+   - The result is a playable WAV file fully compatible with the WAV Trigger board
+
+This two-stage workflow ensures that files from any source are properly formatted, normalized, and ready for use, while preserving audio quality throughout the conversion process.
+
+This script has evolved through several iterations to find the optimal workflow for my needs. While the current default process uses FFmpeg and Audacity, the script includes other processing options that can be enabled through configuration variables:
+
+- Direct FFmpeg processing without Audacity
+- Sox audio processing capabilities 
+- VLC media conversion
+- Direct WAV metadata manipulation
+- Various file organization strategies
+
+The two-stage FFmpeg/Audacity workflow was chosen as the default because it provides:
+
+- Consistent results across different source formats
+- Reliable normalization through Audacity's processing
+- Preservation of audio quality
+- Automated operation through Audacity macros
+
+However, the script remains flexible - other processing paths can be enabled by adjusting variables in the configuration section. This allows the workflow to be customized based on available tools and specific requirements.
+
 ## Features
 
 - Converts MP3 and M4A files to WAV format
-- Processes existing WAV files:
-  - Validates against WAV Trigger requirements
-  - Copies valid files without modification
-  - Converts invalid files to meet requirements
+- Creates an Audicty macro to automate as much as possible
 - Sanitizes metadata to ensure compatibility
 - Handles file organization and naming:
   - Removes leading track numbers from source files
-  - Assigns 3-digit prefixes for primary (101-199) or alternate (201-299) collections
+  - Assigns 3-digit prefixes supporting multiple WAV Trigger file scopes
   - Prevents duplicate files with different numerical prefixes
 
 ## Requirements
 
 - PowerShell 7 or later
 - FFmpeg installed in the path
+- Audactity installed in a common location
 - Source audio files in MP3, M4A, or WAV format
 
 ## Usage
