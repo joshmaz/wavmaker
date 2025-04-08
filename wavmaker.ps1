@@ -68,7 +68,7 @@ $optionRemoveLeadingTrackNumbers = $true
 $optionSanitizeMetadata = $false
 
 # - Validate WAV file properties and structure
-$optionValidateWavFile = $false
+$optionValidateWavFile = $true
 
 # - Check for duplicate files by name (ignoring prefix)
 $optionCheckForDuplicateFiles = $true
@@ -247,14 +247,14 @@ function Test-WavStructure {
     
     # Use ffprobe to check WAV file structure
     $ffprobeOutput = ffprobe -v error -show_format -show_streams -of json "$FilePath"
-    Write-Debug "Raw FFprobe output: $ffprobeOutput"
+    # Write-Debug "Raw FFprobe output: $ffprobeOutput"
     
     try {
         $ffprobeData = $ffprobeOutput | ConvertFrom-Json
-        Write-Debug "Parsed FFprobe data:"
-        Write-Debug "Format name: $($ffprobeData.format.format_name)"
-        Write-Debug "Format size: $($ffprobeData.format.size)"
-        Write-Debug "Number of streams: $($ffprobeData.streams.Count)"
+        # Write-Debug "Parsed FFprobe data:"
+        # Write-Debug "Format name: $($ffprobeData.format.format_name)"
+        # Write-Debug "Format size: $($ffprobeData.format.size)"
+        # Write-Debug "Number of streams: $($ffprobeData.streams.Count)"
         
         # Check if the file has the required chunks in the correct order
         $hasRiff = $ffprobeData.format.format_name -eq 'wav'
@@ -306,7 +306,7 @@ function Test-DuplicateFile {
     # Check if any existing file has the same base name
     foreach ($file in $existingFiles) {
         $existingBaseName = $file.Name -replace '^\d+[_-]', ''
-        Write-Debug "Existing base name: $existingBaseName"
+        # Write-Debug "Existing base name: $existingBaseName"
         if ($existingBaseName -eq $baseName) {
             return @{
                 HasConflict = $true
@@ -621,6 +621,9 @@ Get-ChildItem -Path $inputFolder -Include *.mp3, *.m4a, *.wav -Recurse | ForEach
     # If the input file is a valid WAV file, we can copy it to the output folder instead of converting
     if ($inputFileValidWAV) {
         Write-Host "Copying valid WAV file: $($_.Name)"
+        # Override output file extension to .wav since we're copying a valid WAV file
+        $outputFile = Join-Path $outputFolder ($_.BaseName + ".wav")
+        Write-Debug "Updated output file target for WAV copy: $outputFile"
         Copy-Item -Path $inputFile -Destination $outputFile
         $convertedCount++
         Remove-Item -Path $inputFile
