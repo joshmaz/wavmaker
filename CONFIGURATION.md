@@ -6,20 +6,20 @@ This configuration is designed for a 1947 Chicago Coin Play Boy pinball machine,
 ## Hardware Configuration
 
 ### Physical Switch Mapping (16 available)
-1. **On-board test button** - Always track 001
-2. **New game (Reset bar)** - Random music track
-3. **New game alternate*** - Random alternate track
-4. **Kickout holes** - Play random kickout track
-5. **Kickout holes alternate***
-6. **Rollovers** - Play random rollover track
-7. **Rollovers alternate***
-8. **Tilt relay** - Play random tilt track, non-polyphonic
-9. **Tilt relay alternate***, non-polyphonic
-10. **Information button** - Play informational voice track
-11. **Quiet button** - Stop music tracks
-12. **1K score relay**
-13. **10K score relay**
-14-16. **Undefined**
+0. **On-board test button** - Always track 001
+1. **New game (Reset bar)** - Random music track
+2. **New game alternate*** - Random alternate track
+3. **Kickout holes** - Play random kickout track
+4. **Kickout holes alternate***
+5. **Rollovers** - Play random rollover track
+6. **Rollovers alternate***
+7. **Tilt relay** - Play random tilt track, non-polyphonic
+8. **Tilt relay alternate***, non-polyphonic
+9. **Information button** - Play informational voice track
+10. **Quiet button** - Stop music tracks
+11. **1K score relay**
+12. **10K score relay**
+13-16. **Undefined**
 
 ### Special Hardware Considerations
 - Three-position DPDT for bell settings:
