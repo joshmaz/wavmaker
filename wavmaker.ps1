@@ -1,7 +1,6 @@
-# wavmaker.ps1
 # author: Joshua Mazgelis
-# date: 2025-04-01
-# version: 1.15
+# date: 2025-04-08
+# version: 1.16
 
 [CmdletBinding()]
 param()
@@ -38,22 +37,22 @@ $targetFolder = "C:\Users\joshm\OneDrive\Documents\WAV Trigger\Chicago Coin Play
 
 # Set range numbers for primary and alternate track collections
 # File prefix ranges:
-# - 020-029: Kickout hole sounds (Primary)
-# - 030-039: Kickout hole sounds (Alternate)
-# - 040-049: Rollover lane sounds (Primary)
-# - 050-059: Rollover lane sounds (Alternate)
-# - 060-069: Tilt relay sounds (Primary)
-# - 070-079: Tilt relay sounds (Alternate)
-# - 100-199: Music tracks (Primary)
-# - 200-299: Music tracks (Alternate)
+# - 021-029: Kickout hole sounds (Primary)
+# - 031-039: Kickout hole sounds (Alternate)
+# - 041-049: Rollover lane sounds (Primary)
+# - 051-059: Rollover lane sounds (Alternate)
+# - 061-069: Tilt relay sounds (Primary)
+# - 071-079: Tilt relay sounds (Alternate)
+# - 101-199: Music tracks (Primary)
+# - 201-299: Music tracks (Alternate)
 
 # Define the scopes for all range variables
-$kickoutPrimaryRange = 20..29
-$kickoutAlternateRange = 30..39
-$rolloverPrimaryRange = 40..49
-$rolloverAlternateRange = 50..59
-$tiltPrimaryRange = 60..69
-$tiltAlternateRange = 70..79
+$kickoutPrimaryRange = 21..29
+$kickoutAlternateRange = 31..39
+$rolloverPrimaryRange = 41..49
+$rolloverAlternateRange = 51..59
+$tiltPrimaryRange = 61..69
+$tiltAlternateRange = 71..79
 $musicPrimaryRange = 101..199
 $musicAlternateRange = 201..299
 
@@ -65,7 +64,7 @@ $musicAlternateRange = 201..299
 $optionRemoveLeadingTrackNumbers = $true
 
 # - Sanitize metadata
-$optionSanitizeMetadata = $true
+$optionSanitizeMetadata = $false
 
 # - Validate WAV file properties and structure
 $optionValidateWavFile = $true
@@ -90,11 +89,12 @@ $optionDefaultPostProcessingSoftware = "audacity"
 
 # - Use an intermediary file format for post-processing with audacity
 # - Make this a null string if you don't want to use an intermediary file format (not yet tested)
+# - Tested with: FLAC
 $optionIntermediaryFileFormat = "FLAC"
 
 # - Copy valid WAV files to the target folder
 # - If this is set not true then all WAV files will be reprocessed and not validated & copied
-$optionCopyValidWAVs = $false
+$optionCopyValidWAVs = $true
 
 # - Audacity macro outputfolder
 # - This is the folder that will contain the Audacity macro output files (The WAV files)
@@ -246,14 +246,14 @@ function Test-WavStructure {
     
     # Use ffprobe to check WAV file structure
     $ffprobeOutput = ffprobe -v error -show_format -show_streams -of json "$FilePath"
-    Write-Debug "Raw FFprobe output: $ffprobeOutput"
+    # Write-Debug "Raw FFprobe output: $ffprobeOutput"
     
     try {
         $ffprobeData = $ffprobeOutput | ConvertFrom-Json
-        Write-Debug "Parsed FFprobe data:"
-        Write-Debug "Format name: $($ffprobeData.format.format_name)"
-        Write-Debug "Format size: $($ffprobeData.format.size)"
-        Write-Debug "Number of streams: $($ffprobeData.streams.Count)"
+        # Write-Debug "Parsed FFprobe data:"
+        # Write-Debug "Format name: $($ffprobeData.format.format_name)"
+        # Write-Debug "Format size: $($ffprobeData.format.size)"
+        # Write-Debug "Number of streams: $($ffprobeData.streams.Count)"
         
         # Check if the file has the required chunks in the correct order
         $hasRiff = $ffprobeData.format.format_name -eq 'wav'
@@ -305,7 +305,7 @@ function Test-DuplicateFile {
     # Check if any existing file has the same base name
     foreach ($file in $existingFiles) {
         $existingBaseName = $file.Name -replace '^\d+[_-]', ''
-        Write-Debug "Existing base name: $existingBaseName"
+        # Write-Debug "Existing base name: $existingBaseName"
         if ($existingBaseName -eq $baseName) {
             return @{
                 HasConflict = $true
@@ -572,6 +572,8 @@ if ($optionRemoveLeadingTrackNumbers) {
 
 # Loop through all audio files and process them
 $convertedCount = 0
+$conversionSkippedCount = 0
+
 Write-Host "`nProcessing audio files..." -ForegroundColor Green
 Get-ChildItem -Path $inputFolder -Include *.mp3, *.m4a, *.wav -Recurse | ForEach-Object {
     Write-Host "`nProcessing file: $($_.Name)" -ForegroundColor Blue
@@ -580,31 +582,52 @@ Get-ChildItem -Path $inputFolder -Include *.mp3, *.m4a, *.wav -Recurse | ForEach
     $inputFile = $_.FullName
     Write-Debug "Input file: $inputFile"
 
+    # This is a flag to indicate if the input file is a valid WAV file
+    $inputFileValidWAV = $false
+
     # Create the output file target path with appropriate extension. This is the file that will be created.
     $outputFile = Join-Path $outputFolder ($_.BaseName + ".$($optionIntermediaryFileFormat.ToLower())")
     Write-Debug "Output file target: $outputFile"
 
     # Check if the file is already in the output folder, perhaps from a previous run
-    if (-not (Test-Path $outputFile)) {
-        Write-Host "Processing $($_.Name)..."
+    if (Test-Path $outputFile) {
+        Write-Host "Skipping processing for $($_.Name) as $outputFile already exists in the output folder." -ForegroundColor Yellow
+        $conversionSkippedCount++
+        continue
+    }
+
+    Write-Host "Processing $($_.Name)..."
         
-        # If it's already a WAV file, optionally validate it and copy it to the output folder instead of converting
-        # My validation tests are not fully reliable, so we'll not skip processing if it's already a WAV file
-        if ($_.Extension -eq '.wav' -and $optionCopyValidWAVs -eq $true) {
-            Write-Debug "File is already a WAV file: $($_.Name)"
+    # If it's already a WAV file, optionally validate it and copy it to the output folder instead of converting
+    # My validation tests are not fully reliable, so we'll not skip processing if it's already a WAV file
+    if ($_.Extension -eq '.wav' -and $optionCopyValidWAVs -eq $true) {
+        Write-Debug "File is already a WAV file: $($_.Name)"
+        if ($optionValidateWavFile -eq $true) {
             if ((Test-WavFile -FilePath $inputFile) -and (Test-WavStructure -FilePath $inputFile -FileExtension $_.Extension)) {
                 Write-Host "File $($_.Name) already meets WAV Trigger requirements."
-                # Copy the file to output folder instead of converting
-                Copy-Item -Path $inputFile -Destination $outputFile
-                $convertedCount++
-                Remove-Item -Path $inputFile
-                Write-Host "Copied valid WAV file: $($_.Name)"
-                continue
+                $inputFileValidWAV = $true
+                $conversionSkippedCount++
             } else {
                 Write-Host "WAV file $($_.Name) does not meet requirements. Will be converted."
             }
+        } else {
+            Write-Host "Skipping validation of WAV file: $($_.Name)"
+            $inputFileValidWAV = $true
+            $conversionSkippedCount++
         }
-        
+    }
+    
+    # If the input file is a valid WAV file, we can copy it to the output folder instead of converting
+    if ($inputFileValidWAV) {
+        Write-Host "Copying valid WAV file: $($_.Name)"
+        # Override output file extension to .wav since we're copying a valid WAV file
+        $outputFile = Join-Path $outputFolder ($_.BaseName + ".wav")
+        Write-Debug "Updated output file target for WAV copy: $outputFile"
+        Copy-Item -Path $inputFile -Destination $outputFile
+        $convertedCount++
+        Remove-Item -Path $inputFile
+    } else {
+
         Write-Debug "Input file properties:"
         Write-AudioFileProperties -FilePath $inputFile
 
@@ -638,8 +661,15 @@ Get-ChildItem -Path $inputFolder -Include *.mp3, *.m4a, *.wav -Recurse | ForEach
             # In the future, I can proably just copy Audacity's output file to the output folder and overwrite the working file
             if ($optionIntermediaryFileFormat -eq "FLAC") {
                 $targetCodec = "flac"
-            } else {
+            } elseif ($optionIntermediaryFileFormat -eq "WAV") {
                 $targetCodec = "pcm_s16le"
+            } elseif ($optionIntermediaryFileFormat -eq "MP3") {
+                $targetCodec = "libmp3lame"
+            } elseif ($optionIntermediaryFileFormat -eq "AAC") {
+                $targetCodec = "aac"
+            } else {
+                Write-Host "Invalid intermediary file format selection. $optionIntermediaryFileFormat is not supported. Exiting." -ForegroundColor Red
+                exit
             }
 
             # Now we build the conversion command
@@ -678,7 +708,7 @@ Get-ChildItem -Path $inputFolder -Include *.mp3, *.m4a, *.wav -Recurse | ForEach
                 # For some yet-to-be-determined reason, the file created by ffmpeg is not playable in the WAV Trigger
                 # I have tried to work around this issue by doing some quick post-processing.
                 # This is not an ideal solution, but it works for now
-             
+            
                 if ($optionDefaultPostProcessingSoftware -eq "sox") {
                     # This did not work to resolve the issue of the file not being playable in WAV Trigger
 
@@ -705,7 +735,7 @@ Get-ChildItem -Path $inputFolder -Include *.mp3, *.m4a, *.wav -Recurse | ForEach
                     Write-Host "    alt-o (Tools), then a (Apply Macro), then down-arrow once (to select the AutoWAVMaker macro), then enter" -ForegroundColor Yellow
                     Write-Host "  Once the macro has been executed, close Audacity" -ForegroundColor Yellow
                     Write-Host "    Keystrokes: alt-F4, then 'n' for no save)" -ForegroundColor Yellow
-                    Start-Process -FilePath $audacityLocation -ArgumentList "`"$(Resolve-Path $inputFile)`"" -Wait
+                    Start-Process -FilePath $audacityLocation -ArgumentList "`"$(Resolve-Path $outputFile)`"" -Wait
                     Write-Debug "Audacity process completed"
                     $audacityOutputFile = Join-Path $env:USERPROFILE $optionAudacityMacroOutputFolder "$($_.BaseName).wav"
                     Write-Debug "Audacity output file best guess: $audacityOutputFile"
@@ -748,18 +778,19 @@ Get-ChildItem -Path $inputFolder -Include *.mp3, *.m4a, *.wav -Recurse | ForEach
         } else {
             Write-Host "Conversion failed for $($_.Name)" -ForegroundColor Red
         }
-    } else {
-        Write-Host "Skipping processing for $($_.Name) as $outputFile already exists in the output folder." -ForegroundColor Yellow
     }
 } # End of processing audio files
 
 # Check if any files were converted
-if ($convertedCount -eq 0) {
+if (($convertedCount -eq 0) -and ($conversionSkippedCount -eq 0)) {
     Write-Host "`nNo files were converted." -ForegroundColor Yellow
-} elseif ($convertedCount -eq 1) {
-    Write-Host "`n$convertedCount file was converted to WAV format." -ForegroundColor Green
 } else {
-    Write-Host "`n$convertedCount files were converted to WAV format." -ForegroundColor Green
+    if ($convertedCount > 0) {
+        Write-Host "`n$convertedCount files were converted to WAV format." -ForegroundColor Green   
+    }
+    if ($conversionSkippedCount > 0) {
+        Write-Host "`n$conversionSkippedCount WAV files were passed as-is." -ForegroundColor Yellow
+    }
 }
 
 # Get the list of WAV files in the output folder
