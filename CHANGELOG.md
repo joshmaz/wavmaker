@@ -7,6 +7,7 @@ All notable changes to this project will be documented in this file.
 ### Changed
 - Fixed numbered lists for switches in configuration doc
 - Code updates around WAV input file handling
+- Removed erroneous informaion regarding file naming and assignments
 
 ## [1.15] - 2025-04-01
 

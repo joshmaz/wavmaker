@@ -9,13 +9,6 @@
 
 > **Important:** Mono files or files with sample rates other than 44.1 kHz will not play or may cause unpredictable behavior.
 
-## File Naming & Organization
-- Use 3-digit numeric prefixes to associate files with trigger inputs
-  - Example: `001_SoundName.wav` will play when Trigger 1 is activated
-- Multiple files can use the same trigger number for random playback
-  - Example: `001_SoundA.wav`, `001_SoundB.wav`
-- Avoid special characters in file names (use only letters, numbers, underscores, and dashes)
-
 ## microSD Card Requirements
 - **File System:** FAT16 or FAT32
 - **Allocation size:** 32kB (best performance)
